@@ -1,0 +1,28 @@
+# Cross-Transfer Plugin Patch
+# This patch inserts the cross-transfer host plugin into the DSH host composition
+
+- insert:
+    - id: cross-transfer
+      name: 'dsh-cross-transfer'
+      config:
+        path: '/api/cross-transfer'
+        # tokenSecret: 'your-secret-key'  # Optional, auto-generated (random) per boot if not provided.
+        #                                  # Omitting it invalidates all tokens on every host restart;
+        #                                  # set it explicitly to keep tokens stable across restarts.
+        maxFileSize: 1073741824  # 1GB default
+        chunkSize: 1048576  # 1MB chunks
+        # 房间机制配置：整块可省略（缺省取下列默认值），也可只写需要覆盖的字段。
+        rooms:
+          maxRooms: 100                  # 全局房间总数上限（含建房占位）
+          maxRoomsPerDevice: 5           # 每台设备可拥有的房间数上限
+          maxMembersPerRoom: 16          # 单房间成员上限（含房主，离线保留席位）
+          roomCodeLength: 6              # 随机房号位数，4~12（越界拒绝加载）
+          minPasswordLength: 6           # 密码最小长度（上限固定 128）
+          maxJoinAttempts: 8             # 限流窗口内允许的进房失败次数
+          joinAttemptWindowMs: 60000     # 限流窗口（60s）
+          joinLockoutMs: 120000          # 触发限流后的锁定时长（2min）
+          ticketTtlMs: 86400000          # 房间票据有效期（24h）
+          idleTtlMs: 1800000             # 空闲回收阈值（30min）
+          closeWhenOwnerLeaves: true     # 房主退房即关房；false 则自动移交房主
+          discoverableByDefault: true    # 建房默认出现在房间列表
+          allowRoomList: true            # false 时 REST /rooms 与 WS room-list 一律 403
