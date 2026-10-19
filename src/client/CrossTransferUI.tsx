@@ -26,7 +26,8 @@ export const CrossTransferUI: React.FC<CrossTransferUIProps> = ({ client }) => {
     <div style={{
       display: 'flex',
       flexDirection: 'column',
-      height: '100vh',
+      height: '100%',
+      minHeight: 0,
       background: '#fff',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }}>

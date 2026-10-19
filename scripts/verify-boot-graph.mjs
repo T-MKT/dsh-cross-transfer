@@ -18,11 +18,10 @@
  * Prints one JSON object on stdout and exits 0 when both facts hold.
  */
 import { spawn } from 'node:child_process'
-import { cp, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { cp, mkdtemp, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 const argv = process.argv.slice(2)
 /** Read one `--flag value` pair, or the fallback. */
@@ -31,23 +30,21 @@ function flag(name, fallback) {
   return index === -1 || argv[index + 1] === undefined ? fallback : argv[index + 1]
 }
 
-const profileDir = resolve(flag('profile', join(process.env.USERPROFILE ?? process.env.HOME ?? '.', '.dsh', 'profiles', 'web')))
+const homeDir = process.env.USERPROFILE ?? process.env.HOME ?? '.'
+const profileDir = resolve(flag('profile', join(homeDir, '.dsh', 'profiles', 'web')))
 const marker = flag('marker', 'sidebar.footer.action')
 const pluginId = flag('plugin', 'dsh-cross-transfer')
-
-/** The dsh launcher: resolve from the global install the profile was built against. */
-const dshBin = resolve(flag('dsh', join(process.env.USERPROFILE ?? process.env.HOME ?? '.', 'AppData', 'Roaming', 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')))
+const dshBin = resolve(flag('dsh', join(homeDir, 'AppData', 'Roaming', 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')))
 
 if (!existsSync(profileDir)) throw new Error(`profile not found: ${profileDir}`)
 if (!existsSync(dshBin)) throw new Error(`dsh launcher not found: ${dshBin}`)
 
 const home = await mkdtemp(join(tmpdir(), 'dsh-bootcheck-'))
-const profiles = join(home, 'profiles')
-await cp(profileDir, join(profiles, 'web'), { recursive: true })
+await cp(profileDir, join(home, 'profiles', 'web'), { recursive: true })
 
 const child = spawn(process.execPath, [dshBin, 'web', '--port', '0', '--no-open'], {
   env: { ...process.env, DSH_HOME: home },
-  stdio: ['ignore', 'pipe', 'pipe']
+  stdio: ['ignore', 'pipe', 'pipe'],
 })
 
 let stdout = ''
@@ -75,8 +72,9 @@ async function inspect(url) {
   const index = await fetch(new URL('/', target), { headers: cookie === '' ? {} : { cookie } })
   const html = await index.text()
 
-  const graphRow = new RegExp(`"id":"${pluginId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^}]*`, 'u').exec(html)?.[0] ?? null
-  const combo = new RegExp(`/plugins/\\?\\?${pluginId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/client\\.js[^"'&]*&rev=[^"&]*`, 'u').exec(html)?.[0] ?? null
+  const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const graphRow = new RegExp(`"id":"${escape(pluginId)}"[^}]*`, 'u').exec(html)?.[0] ?? null
+  const combo = new RegExp(`/plugins/\\?\\?${escape(pluginId)}/client\\.js[^"'&]*&rev=[^"&]*`, 'u').exec(html)?.[0] ?? null
 
   let bundleHasMarker = false
   let bundleBytes = 0
@@ -89,9 +87,11 @@ async function inspect(url) {
     bundleHasMarker = body.includes(marker)
   }
 
-  const rest = await fetch(new URL('/api/cross-transfer/rooms', target)).then((response) => response.status).catch(() => 0)
+  const restStatus = await fetch(new URL('/api/cross-transfer/rooms', target))
+    .then((response) => response.status)
+    .catch(() => 0)
 
-  return { graphRow, combo, bundleStatus, bundleBytes, bundleHasMarker, restStatus: rest, indexBytes: Buffer.byteLength(html) }
+  return { graphRow, combo, bundleStatus, bundleBytes, bundleHasMarker, restStatus, indexBytes: Buffer.byteLength(html) }
 }
 
 let report

@@ -3,14 +3,23 @@
  * the React panels, mounted under `ctx.crossTransferClient`.
  */
 import type { Context } from '@deepseek-ai/cordis'
+// Type-only: these augment the cordis Context with `slots` and the SlotMap
+// with `sidebar.footer.action`; the runtime values arrive from the shell.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { z } from 'zod'
 import { CrossTransferClient } from './CrossTransferClient.js'
+import { CrossTransferLauncher } from './CrossTransferLauncher.js'
 
 /** Cordis plugin name. */
 export const name = 'cross-transfer-client'
 
-/** Client services this half composes with. */
-export const inject = ['connection']
+/**
+ * Client services this half composes with. `slots` is the renderer's slot
+ * registry (a cordis service, not a package to prefetch), so it belongs here
+ * rather than in `dsh.client.inject`.
+ */
+export const inject = ['connection', 'slots']
 
 export interface CrossTransferClientConfig {
   autoConnect?: boolean
@@ -51,6 +60,21 @@ export function apply(ctx: Context, config: CrossTransferClientConfig): void {
   // `CrossTransferClient extends Service`, so its constructor already registers
   // `crossTransferClient` — calling ctx.reflect.provide again is a duplicate.
   const client = new CrossTransferClient(ctx, config)
+
+  // The sidebar foot is the visible entry point: a compact trigger that opens
+  // the transfer UI in a floating panel. Registering before the auto-connect
+  // early return keeps the entry present when auto-connect is off.
+  ctx.slots.inject('sidebar.footer.action', () =>
+    ctx.slots.register(
+      {
+        name: 'sidebar.footer.action',
+        id: 'cross-transfer-panel',
+        order: 100,
+        inject: () => ({ client })
+      },
+      CrossTransferLauncher
+    )
+  )
 
   if (config.autoConnect === false) {
     ctx.logger.info('[cross-transfer] client mounted (auto-connect off)')
