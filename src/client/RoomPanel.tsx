@@ -90,30 +90,30 @@ function formatTime(timestamp: number): string {
 
 const buttonStyle: React.CSSProperties = {
   padding: '6px 12px',
-  border: '1px solid #ddd',
+  border: '1px solid var(--dsw-alias-border-l2)',
   borderRadius: '4px',
-  background: '#fff',
+  background: 'var(--dsw-alias-bg-layer-1)',
   cursor: 'pointer',
   fontSize: '13px'
 }
 
 const primaryButtonStyle: React.CSSProperties = {
   ...buttonStyle,
-  background: '#007bff',
-  color: '#fff',
+  background: 'var(--dsw-alias-button-primary-fill)',
+  color: 'var(--dsw-alias-label-primary-inverted)',
   border: 'none'
 }
 
 const dangerButtonStyle: React.CSSProperties = {
   ...buttonStyle,
-  background: '#dc3545',
-  color: '#fff',
+  background: 'var(--dsw-alias-state-error-primary)',
+  color: 'var(--dsw-alias-label-primary-inverted)',
   border: 'none'
 }
 
 const inputStyle: React.CSSProperties = {
   padding: '6px 10px',
-  border: '1px solid #ddd',
+  border: '1px solid var(--dsw-alias-border-l2)',
   borderRadius: '6px',
   fontSize: '13px',
   fontFamily: 'inherit'
@@ -121,12 +121,12 @@ const inputStyle: React.CSSProperties = {
 
 const sectionStyle: React.CSSProperties = {
   padding: '12px',
-  border: '1px solid #eee',
+  border: '1px solid var(--dsw-alias-border-l1)',
   borderRadius: '8px',
-  background: '#fafafa'
+  background: 'var(--dsw-alias-bg-layer-2)'
 }
 
-const sectionTitleStyle: React.CSSProperties = { margin: '0 0 8px', fontSize: '14px', fontWeight: 600, color: '#333' }
+const sectionTitleStyle: React.CSSProperties = { margin: '0 0 8px', fontSize: '14px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }
 
 /**
  * 房间面板：建房、进房、房间列表、成员与房主操作。
@@ -393,7 +393,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
   }
 
   return (
-    <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', overflow: 'auto', background: '#fff' }}>
+    <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', overflow: 'auto', background: 'var(--dsw-alias-bg-layer-1)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h3 style={{ margin: 0 }}>Rooms</h3>
         <button onClick={() => void refreshRooms()} style={buttonStyle}>刷新房间列表</button>
@@ -401,17 +401,17 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
 
       {/* 错误区：code 已翻成人话，限流额外显示倒计时 */}
       {retryUntil !== null && (
-        <div style={{ padding: '8px 12px', background: '#fff3cd', color: '#856404', border: '1px solid #ffeeba', borderRadius: '6px', fontSize: '13px' }}>
+        <div style={{ padding: '8px 12px', background: 'var(--dsw-alias-state-warn-tertiary)', color: 'var(--dsw-alias-state-warn-label)', border: '1px solid var(--dsw-alias-state-warn-secondary)', borderRadius: '6px', fontSize: '13px' }}>
           请求被限流，<Countdown until={retryUntil} /> 秒后可以重试。
         </div>
       )}
       {errorList.length > 0 && (
-        <div style={{ padding: '8px 12px', background: '#f8d7da', color: '#721c24', border: '1px solid #f5c6cb', borderRadius: '6px', fontSize: '13px' }}>
+        <div style={{ padding: '8px 12px', background: 'var(--dsw-alias-interactive-bg-hover-danger)', color: 'var(--dsw-alias-state-error-primary)', border: '1px solid var(--dsw-alias-state-error-secondary)', borderRadius: '6px', fontSize: '13px' }}>
           {errorList.map(([key, message]) => <div key={key}>{message}</div>)}
         </div>
       )}
       {Object.entries(notices).map(([key, message]) => (
-        <div key={key} style={{ padding: '8px 12px', background: '#d4edda', color: '#155724', border: '1px solid #c3e6cb', borderRadius: '6px', fontSize: '13px' }}>
+        <div key={key} style={{ padding: '8px 12px', background: 'var(--dsw-alias-state-success-tertiary)', color: 'var(--dsw-alias-label-primary)', border: '1px solid var(--dsw-alias-state-success-secondary)', borderRadius: '6px', fontSize: '13px' }}>
           {message}
         </div>
       ))}
@@ -421,7 +421,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
         <div style={{ ...sectionStyle, flex: '1 1 320px' }}>
           <p style={sectionTitleStyle}>创建房间</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <label style={{ fontSize: '12px', color: '#666' }}>
+            <label style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
               房号（留空自动生成）
               <input
                 value={createRoomId}
@@ -431,7 +431,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                 style={{ ...inputStyle, width: '100%', marginTop: '4px' }}
               />
             </label>
-            <label style={{ fontSize: '12px', color: '#666' }}>
+            <label style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
               房间名
               <input
                 value={createName}
@@ -440,7 +440,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                 style={{ ...inputStyle, width: '100%', marginTop: '4px' }}
               />
             </label>
-            <label style={{ fontSize: '12px', color: '#666' }}>
+            <label style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
               密码
               <input
                 type="password"
@@ -450,7 +450,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                 style={{ ...inputStyle, width: '100%', marginTop: '4px' }}
               />
             </label>
-            <label style={{ fontSize: '12px', color: '#666' }}>
+            <label style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
               确认密码
               <input
                 type="password"
@@ -459,7 +459,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                 style={{ ...inputStyle, width: '100%', marginTop: '4px' }}
               />
             </label>
-            <label style={{ fontSize: '12px', color: '#666' }}>
+            <label style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
               人数上限
               <input
                 value={createMaxMembers}
@@ -468,7 +468,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                 style={{ ...inputStyle, width: '100%', marginTop: '4px' }}
               />
             </label>
-            <label style={{ fontSize: '13px', color: '#333', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <label style={{ fontSize: '13px', color: 'var(--dsw-alias-label-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <input type="checkbox" checked={createDiscoverable} onChange={e => setCreateDiscoverable(e.target.checked)} />
               在房间列表里可见
             </label>
@@ -486,7 +486,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
         <div style={{ ...sectionStyle, flex: '1 1 320px' }}>
           <p style={sectionTitleStyle}>加入房间</p>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-            <label style={{ fontSize: '12px', color: '#666' }}>
+            <label style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
               房号
               <input
                 value={joinRoomId}
@@ -496,7 +496,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                 style={{ ...inputStyle, width: '120px', marginTop: '4px' }}
               />
             </label>
-            <label style={{ fontSize: '12px', color: '#666' }}>
+            <label style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
               密码
               <input
                 type="password"
@@ -516,7 +516,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
 
           <p style={{ ...sectionTitleStyle, margin: '16px 0 8px' }}>可发现的房间</p>
           {listedRooms.length === 0 ? (
-            <p style={{ margin: 0, color: '#999', fontSize: '13px' }}>暂无公开房间</p>
+            <p style={{ margin: 0, color: 'var(--dsw-alias-label-tertiary)', fontSize: '13px' }}>暂无公开房间</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {listedRooms.map(room => {
@@ -524,14 +524,14 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                 return (
                   <div
                     key={room.roomId}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '6px 8px', border: '1px solid #eee', borderRadius: '6px', background: '#fff' }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '6px 8px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '6px', background: 'var(--dsw-alias-bg-layer-1)' }}
                   >
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: '13px', fontWeight: 500 }}>
                         {room.name || '(未命名)'} · {room.roomId}
-                        {room.locked && <span style={{ marginLeft: '6px', color: '#856404' }}>已锁定</span>}
+                        {room.locked && <span style={{ marginLeft: '6px', color: 'var(--dsw-alias-state-warn-label)' }}>已锁定</span>}
                       </div>
-                      <div style={{ fontSize: '12px', color: '#666' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
                         {room.memberCount}/{room.maxMembers} 人
                         {/* 列表只暴露公开字段，绝不回显任何密码或哈希 */}
                         {room.locked && <span> · 需要密码</span>}
@@ -559,7 +559,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
       <div style={sectionStyle}>
         <p style={sectionTitleStyle}>已进入的房间</p>
         {joinedRooms.length === 0 ? (
-          <p style={{ margin: 0, color: '#999', fontSize: '13px' }}>还没有进入任何房间。聊天必须先建房或进房。</p>
+          <p style={{ margin: 0, color: 'var(--dsw-alias-label-tertiary)', fontSize: '13px' }}>还没有进入任何房间。聊天必须先建房或进房。</p>
         ) : (
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {joinedRooms.map(room => (
@@ -567,15 +567,15 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                 key={room.roomId}
                 style={{
                   padding: '8px 10px',
-                  border: selectedRoom?.roomId === room.roomId ? '2px solid #007bff' : '1px solid #ddd',
+                  border: selectedRoom?.roomId === room.roomId ? '2px solid var(--dsw-alias-state-business-primary)' : '1px solid var(--dsw-alias-border-l2)',
                   borderRadius: '8px',
-                  background: '#fff',
+                  background: 'var(--dsw-alias-bg-layer-1)',
                   minWidth: '180px'
                 }}
               >
                 <div style={{ fontSize: '13px', fontWeight: 500 }}>
                   {room.name || '(未命名)'} · {room.roomId}
-                  {room.role === 'owner' && <span style={{ marginLeft: '6px', color: '#007bff' }}>房主</span>}
+                  {room.role === 'owner' && <span style={{ marginLeft: '6px', color: 'var(--dsw-alias-state-business-primary)' }}>房主</span>}
                 </div>
                 <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
                   <button onClick={() => client.setActiveRoom(room.roomId)} style={{ ...buttonStyle, padding: '2px 8px', fontSize: '12px' }}>设为当前</button>
@@ -594,7 +594,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
           </div>
         )}
         {selectedRoom && (
-          <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#666' }}>
+          <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
             当前房间：{selectedRoom.name || '(未命名)'} · {selectedRoom.roomId}（{selectedRoom.role === 'owner' ? '房主' : '成员'}）
           </p>
         )}
@@ -609,18 +609,18 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
           )}
         </div>
         {!activeRoomId ? (
-          <p style={{ margin: 0, color: '#999', fontSize: '13px' }}>请先选择一个已进入的房间</p>
+          <p style={{ margin: 0, color: 'var(--dsw-alias-label-tertiary)', fontSize: '13px' }}>请先选择一个已进入的房间</p>
         ) : selectedMembers.length === 0 ? (
-          <p style={{ margin: 0, color: '#999', fontSize: '13px' }}>暂无成员数据</p>
+          <p style={{ margin: 0, color: 'var(--dsw-alias-label-tertiary)', fontSize: '13px' }}>暂无成员数据</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {selectedMembers.map(member => (
               <div key={member.deviceId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '4px 0' }}>
                 <span style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: member.online ? '#28a745' : '#ccc' }} />
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: member.online ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-label-caption)' }} />
                   {member.deviceName}
                   <RoleTag role={member.role} />
-                  <span style={{ color: '#999', fontSize: '12px' }}>
+                  <span style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: '12px' }}>
                     {member.online ? '在线' : '离线'} · {member.sessionCount} 个会话 · {formatTime(member.joinedAt)}
                   </span>
                 </span>
@@ -645,14 +645,14 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
         )}
 
         {activeRoomId && !isOwner && (
-          <p style={{ margin: '12px 0 0', fontSize: '12px', color: '#999' }}>房主操作仅对房主可见。</p>
+          <p style={{ margin: '12px 0 0', fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' }}>房主操作仅对房主可见。</p>
         )}
 
         {activeRoomId && isOwner && (
-          <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #eee', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--dsw-alias-border-l1)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <p style={{ margin: 0, fontSize: '13px', fontWeight: 600 }}>房主操作</p>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <label style={{ fontSize: '12px', color: '#666' }}>
+              <label style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
                 新密码
                 <input
                   type="password"
@@ -661,7 +661,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                   style={{ ...inputStyle, width: '140px', marginTop: '4px' }}
                 />
               </label>
-              <label style={{ fontSize: '12px', color: '#666' }}>
+              <label style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
                 确认新密码
                 <input
                   type="password"
@@ -708,7 +708,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
 }
 
 const RoleTag: React.FC<{ role: RoomRole }> = ({ role }) => (
-  <span style={{ padding: '1px 6px', borderRadius: '8px', fontSize: '11px', background: role === 'owner' ? '#cce5ff' : '#f0f0f0', color: role === 'owner' ? '#004085' : '#666' }}>
+  <span style={{ padding: '1px 6px', borderRadius: '8px', fontSize: '11px', background: role === 'owner' ? 'var(--dsw-alias-state-business-tertiary)' : 'var(--dsw-alias-bg-layer-2)', color: role === 'owner' ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-label-secondary)' }}>
     {role === 'owner' ? '房主' : '成员'}
   </span>
 )
@@ -733,14 +733,14 @@ const RoomMessagePreview: React.FC<{ client: CrossTransferClient; roomId: string
   }, [client, roomId])
 
   if (messages.length === 0) {
-    return <p style={{ margin: 0, color: '#999', fontSize: '13px' }}>暂无消息</p>
+    return <p style={{ margin: 0, color: 'var(--dsw-alias-label-tertiary)', fontSize: '13px' }}>暂无消息</p>
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '160px', overflow: 'auto' }}>
       {messages.slice(-20).map(message => (
         <div key={message.messageId} style={{ fontSize: '13px' }}>
-          <span style={{ color: '#666' }}>{formatTime(message.timestamp)} {message.senderDeviceName}：</span>
+          <span style={{ color: 'var(--dsw-alias-label-secondary)' }}>{formatTime(message.timestamp)} {message.senderDeviceName}：</span>
           <span>{message.content}</span>
         </div>
       ))}

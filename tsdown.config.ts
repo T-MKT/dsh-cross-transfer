@@ -39,7 +39,8 @@ export default defineConfig([
       '@deepseek-ai/dsh-client-connection',
       'react',
       'react-dom',
-      'react/jsx-runtime'
+      'react/jsx-runtime',
+      'zod'
     ]
   }
 ])

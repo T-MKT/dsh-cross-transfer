@@ -70,15 +70,15 @@ dsh-cross-transfer/
 
 #### 3.1.1 更新 `package.json` 的 `peerDependencies`
 
-- [ ] `@deepseek-ai/cordis`：`^4.0.2` → `~4.0.5`。
-- [ ] `@deepseek-ai/dsh-host-webserver`：`^0.1.2-rc.1` → `^0.2.1-rc.2`。
-- [ ] 不动 `dependencies`、`dsh` 字段（本节点只改 peer）。
+- [x] `@deepseek-ai/cordis`：`^4.0.2` → `~4.0.5`。
+- [x] `@deepseek-ai/dsh-host-webserver`：`^0.1.2-rc.1` → `^0.2.1-rc.2`。
+- [x] 不动 `dependencies`、`dsh` 字段（本节点只改 peer）。
 - 完成判据：`grep -n '0\.1\.2-rc' package.json` 无输出（旧版本号全部清除）。
 
 #### 3.1.2 重生成 lock 并跑兼容门禁评测
 
-- [ ] `npm install`（更新 `package-lock.json`；确认 `node_modules/@deepseek-ai/*` 为 0.2.1-rc.2、cordis 为 4.0.5）。
-- [ ] 用当前 dsh 的门禁评测函数对改后的 manifest 求值（必须放行）：
+- [x] `npm install`（更新 `package-lock.json`；确认 `node_modules/@deepseek-ai/*` 为 0.2.1-rc.2、cordis 为 4.0.5）。
+- [x] 用当前 dsh 的门禁评测函数对改后的 manifest 求值（必须放行）：
   ```bash
   D="$(dirname "$(dirname "$(readlink -f "$(command -v dsh)")")")"
   node --input-type=module -e "
@@ -94,30 +94,30 @@ dsh-cross-transfer/
 
 #### 3.2.1 devDependencies 对齐 0.2.1-rc.2
 
-- [ ] `@deepseek-ai/cordis` → `~4.0.5`。
-- [ ] `@deepseek-ai/dsh-client-connection`、`dsh-client-ui-renderer`、`dsh-client-ui-sidebar`、`dsh-client-ui-slots`、`dsh-host-webserver`、`dsh-typert-protocol`、`dsh-util-crypto` → `^0.2.1-rc.2`。
-- [ ] 新增 `@deepseek-ai/dsh-client-store` → `^0.2.1-rc.2`（`dsh-client-ui-slots` 的类型声明 import 它，显式声明后 typecheck 才不依赖 `skipLibCheck` 掩盖）。
-- [ ] `npm install` 重生成 lock。
+- [x] `@deepseek-ai/cordis` → `~4.0.5`。
+- [x] `@deepseek-ai/dsh-client-connection`、`dsh-client-ui-renderer`、`dsh-client-ui-sidebar`、`dsh-client-ui-slots`、`dsh-host-webserver`、`dsh-typert-protocol`、`dsh-util-crypto` → `^0.2.1-rc.2`。
+- [x] 新增 `@deepseek-ai/dsh-client-store` → `^0.2.1-rc.2`（`dsh-client-ui-slots` 的类型声明 import 它，显式声明后 typecheck 才不依赖 `skipLibCheck` 掩盖）。
+- [x] `npm install` 重生成 lock。
 - 完成判据：`node -e "for (const p of ['cordis','dsh-client-ui-renderer','dsh-client-ui-sidebar','dsh-client-connection','dsh-client-ui-slots','dsh-host-webserver','dsh-client-store']) console.log(p, require('@deepseek-ai/'+p+'/package.json').version)"` 输出为 4.0.5 / 0.2.1-rc.2，且 `npm run typecheck` 0 error。
 
 #### 3.2.2 清理过期的 `dsh.client.inject`
 
-- [ ] 删除 `package.json` 的 `dsh.client.inject` 整个字段（保留 `platform: "web"`、`immediately: true`）。
-- [ ] 不改 `cordis.patch.yml`。
+- [x] 删除 `package.json` 的 `dsh.client.inject` 整个字段（保留 `platform: "web"`、`immediately: true`）。
+- [x] 不改 `cordis.patch.yml`。
 - 完成判据：`node -e "console.log(JSON.stringify(require('./package.json').dsh.client))"` 输出不含 `inject`；`npm run bundle` 后临时 host 的 boot graph 行不再带 `inject` 字段且启动无警告（见 3.6.2）。
 
 #### 3.2.3 修正 client 类型出口
 
-- [ ] `exports["./client"].types`：`./lib/client/index.d.ts` → `./lib/client/index.d.cts`（tsdown 的 CJS dts 实际产物）。
-- [ ] `files` 数组里 `lib/client/index.d.ts` → `lib/client/index.d.cts`。
+- [x] `exports["./client"].types`：`./lib/client/index.d.ts` → `./lib/client/index.d.cts`（tsdown 的 CJS dts 实际产物）。
+- [x] `files` 数组里 `lib/client/index.d.ts` → `lib/client/index.d.cts`。
 - 完成判据：`npm run bundle` 后 `ls lib/client/index.d.cts` 存在；`npm pack --dry-run` 列表包含 `lib/client/index.d.cts`；`node -e "console.log(require('./package.json').exports['./client'].types)"` 指向存在的文件。
 
 ### 3.3 client 构建（可选，用户已接受）
 
 #### 3.3.1 client bundle 外置 zod（改用 shell seed）
 
-- [ ] `tsdown.config.ts` 第二个 config（client 段）的 `external` 数组追加 `'zod'`。
-- [ ] `npm run bundle`。
+- [x] `tsdown.config.ts` 第二个 config（client 段）的 `external` 数组追加 `'zod'`。
+- [x] `npm run bundle`。
 - 完成判据：`grep -c 'require("zod")' lib/client/index.js` 为 1；bundle 体积由 299,544 B 降到约 130 KB（本次实测 129,838 B，require 恰为 `[@deepseek-ai/cordis, react, react/jsx-runtime, zod]` 四条）；离线探针以这四个 seed 作 require 表执行 factory 成功、`Config['~standard'].validate(undefined)` 仍得 `{autoConnect:true}`；3.6.2 的临时 host boot graph/client bundle/REST 仍全通过。
 
 ### 3.4 面板主题 token 化（可选，用户已接受）
@@ -126,11 +126,11 @@ dsh-cross-transfer/
 
 统一按下方**冻结映射表**替换；颜色作为 `var(--dsw-*, <原值>)` 的 fallback 保留时，原值只允许出现在 `var()` 内。共 156 处、7 个文件，按文件分 5 个 Agent 并行，写入范围互不重叠：
 
-- [ ] **Agent A**：`src/client/ChatPanel.tsx`（19 处）+ `src/client/CrossTransferLauncher.tsx`（4 处）— 产出：文件内不再有裸 hex（依赖：§2 冻结映射表）
-- [ ] **Agent B**：`src/client/CrossTransferUI.tsx`（13 处）+ `src/client/DeviceList.tsx`（14 处）— 同上（依赖：§2 冻结映射表）
-- [ ] **Agent C**：`src/client/FileTransferPanel.tsx`（24 处）— 同上（依赖：§2 冻结映射表）
-- [ ] **Agent D**：`src/client/GitSyncPanel.tsx`（28 处）— 同上（依赖：§2 冻结映射表）
-- [ ] **Agent E**：`src/client/RoomPanel.tsx`（54 处）— 同上（依赖：§2 冻结映射表）
+- [x] **Agent A**：`src/client/ChatPanel.tsx`（19 处）+ `src/client/CrossTransferLauncher.tsx`（4 处）— 产出：文件内不再有裸 hex（依赖：§2 冻结映射表）
+- [x] **Agent B**：`src/client/CrossTransferUI.tsx`（13 处）+ `src/client/DeviceList.tsx`（14 处）— 同上（依赖：§2 冻结映射表）
+- [x] **Agent C**：`src/client/FileTransferPanel.tsx`（24 处）— 同上（依赖：§2 冻结映射表）
+- [x] **Agent D**：`src/client/GitSyncPanel.tsx`（28 处）— 同上（依赖：§2 冻结映射表）
+- [x] **Agent E**：`src/client/RoomPanel.tsx`（54 处）— 同上（依赖：§2 冻结映射表）
 - 完成判据：`grep -rn '#[0-9a-fA-F]\{3,8\}' src/client/*.tsx | grep -v 'var(--dsw-'` 无输出；`npm run typecheck` 0 error；用户浏览器 light/dark 各看一遍面板可读、无颜色明显错乱。
 
 **冻结映射表**（新代码只用右侧 token；现有代码里已有的 4 处 token（含 fallback）保持不动）：
@@ -168,26 +168,26 @@ dsh-cross-transfer/
 
 #### 3.5.1 修正 `scripts/verify-boot-graph.mjs` 的 graph 行 URL 正则
 
-- [ ] 第 77 行 combo 正则去掉前导 `/`，匹配文档相对地址：
+- [x] 第 77 行 combo 正则去掉前导 `/`，匹配文档相对地址：
   ```js
   const combo = new RegExp(`plugins/\\?\\?${escape(pluginId)}/client\\.js[^"'&]*&rev=[^"&]*`, 'u').exec(html)?.[0] ?? null
   ```
-- [ ] 其余保持不动：`graphRow` 正则、marker 检查、`/api/cross-transfer/rooms` 探测、默认参数与退出判据。
+- [x] 其余保持不动：`graphRow` 正则、marker 检查、`/api/cross-transfer/rooms` 探测、默认参数与退出判据。
 - 完成判据：在装有本插件的临时 profile 上运行脚本退出码 0，输出 `inBootGraph: true` 且 `bundleHasMarker: true`（见 3.6.2；真实 profile 不要改）。
 
 ### 3.6 整机回归验证
 
 #### 3.6.1 typecheck + 全量测试
 
-- [ ] `npm run typecheck` → 0 error。
-- [ ] `npm test` → 10 个测试文件、343 个用例全通过（本次检查已在 0.2.1-rc.2 依赖下实测的基线）。
+- [x] `npm run typecheck` → 0 error。
+- [x] `npm test` → 10 个测试文件、343 个用例全通过（本次检查已在 0.2.1-rc.2 依赖下实测的基线）。
 - 完成判据：两条命令均通过。
 
 #### 3.6.2 临时 profile 安装 + 服务端/客户端加载实测
 
-- [ ] `npm run bundle && npm pack`。
-- [ ] 在 `$HOME` 下的临时 DSH_HOME 复制 `~/.dsh/profiles/web`（不要改真实 profile），`dsh plugin --profile web add ./dsh-cross-transfer-0.1.0.tgz`，确认安装成功、插件进入 `dsh.profile.bundles`。
-- [ ] `DSH_HOME=<临时> dsh web --port 0 --no-open`，确认：
+- [x] `npm run bundle && npm pack`。
+- [x] 在 `$HOME` 下的临时 DSH_HOME 复制 `~/.dsh/profiles/web`（不要改真实 profile），`dsh plugin --profile web add ./dsh-cross-transfer-0.1.0.tgz`，确认安装成功、插件进入 `dsh.profile.bundles`。
+- [x] `DSH_HOME=<临时> dsh web --port 0 --no-open`，确认：
   1. index 的 boot graph 含 `dsh-cross-transfer` 行（无 `inject` 字段、`immediately: true`），且 `node scripts/verify-boot-graph.mjs --profile <临时 profile> --dsh "$(readlink -f "$(command -v dsh)")"` 退出码 0；
   2. `GET /api/cross-transfer/rooms` 返回 200；
   3. `POST /api/cross-transfer/token` 返回 token，且用该 token 连 `ws://<host>/api/cross-transfer` 能收到 `welcome` 帧。
@@ -205,3 +205,19 @@ dsh-cross-transfer/
 | `dsh web --dump-config` | 插件行与全部 rooms 默认值正确投影 |
 
 > 收尾（验证通过后、由检查方执行）：把 `COMPATIBLE_VERSION` 第一行写 `0.2.1-rc.2`、第二行写验证当日日期（本次检查确认仓库当前无此文件）。
+
+## 5 执行记录（2026-10-20，分支 `compat/dsh-0.2.1-rc.2-check`）
+
+全部节点已执行并验证；改动未提交，留待审阅。实测结果：
+
+| 节点 | 结果 |
+| --- | --- |
+| 3.1 兼容门禁 | `evaluatePluginCompatibility` → `PASS`；`package.json` 已无 `0.1.2-rc`；安装的 cordis=4.0.5、`dsh-*`=0.2.1-rc.2 |
+| 3.2 清单清理 | `dsh.client` = `{"platform":"web","immediately":true}`；`lib/client/index.d.cts` 产出并被 `npm pack` 收录；typecheck 0 error |
+| 3.3 client 构建 | external 生效：bundle 仅 require `[@deepseek-ai/cordis, react, react/jsx-runtime, zod]`（`require("zod")` 1 处）；299,544 B → **134,019 B**（比 129,838 B 多约 4.2 KB，为 156 处 token 字符串变长所致） |
+| 3.4.1 token 化 | 7 文件 156 处 hex 全部替换，`grep ... \| grep -v 'var(--dsw-'` 无输出；使用的 23 个 token 均存在于 `@deepseek-ai/dsh-client-ui-theme` 的定义（共 403 个）；typecheck 0 error。**light/dark 目视检查未执行**（需真实 profile + 浏览器，本文档禁止改真实 profile），留待用户确认 |
+| 3.5 验证脚本 | combo 正则已匹配文档相对地址；临时 profile 上退出码 0，`inBootGraph: true`、`bundleHasMarker: true` |
+| 3.6.1 | `npm run typecheck` 0 error；`npm test` 10 files / 343 tests 全通过 |
+| 3.6.2 | 临时 profile 真安装成功并进入 `dsh.profile.bundles`；boot graph 行无 `inject`、`immediately: true`；bundle 200 / 134,094 B 且含 marker；`GET /rooms` 200；`POST /token` 200 且 WS 收到 `welcome`；临时 DSH_HOME 已删除 |
+
+`COMPATIBLE_VERSION` 已按 §4 收尾要求写入 `0.2.1-rc.2` 与 `2026-10-20`。

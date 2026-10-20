@@ -154,7 +154,7 @@ export const CrossTransferLauncher: React.FC<CrossTransferLauncherProps> = ({ wi
                   height: 8,
                   borderRadius: '50%',
                   flex: 'none',
-                  background: connected ? '#28a745' : '#dc3545'
+                  background: connected ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-error-primary)'
                 }}
               />
           </>

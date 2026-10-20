@@ -28,7 +28,7 @@ export const CrossTransferUI: React.FC<CrossTransferUIProps> = ({ client }) => {
       flexDirection: 'column',
       height: '100%',
       minHeight: 0,
-      background: '#fff',
+      background: 'var(--dsw-alias-bg-layer-1)',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }}>
       {/* Header */}
@@ -37,8 +37,8 @@ export const CrossTransferUI: React.FC<CrossTransferUIProps> = ({ client }) => {
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '12px 16px',
-        borderBottom: '1px solid #eee',
-        background: '#fafafa'
+        borderBottom: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-layer-2)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button
@@ -66,12 +66,12 @@ export const CrossTransferUI: React.FC<CrossTransferUIProps> = ({ client }) => {
                 width: '8px',
                 height: '8px',
                 borderRadius: '50%',
-                background: client.isConnected() ? '#28a745' : '#dc3545'
+                background: client.isConnected() ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-error-primary)'
               }}
             />
             {client.isConnected() ? 'Connected' : 'Disconnected'}
           </div>
-          <div style={{ fontSize: '12px', color: '#666' }}>
+          <div style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
             {client.getDeviceName()}
           </div>
           {!client.isConnected() && (
@@ -85,8 +85,8 @@ export const CrossTransferUI: React.FC<CrossTransferUIProps> = ({ client }) => {
               }}
               style={{
                 padding: '6px 12px',
-                background: '#007bff',
-                color: '#fff',
+                background: 'var(--dsw-alias-button-primary-fill)',
+                color: 'var(--dsw-alias-label-primary-inverted)',
                 border: 'none',
                 borderRadius: '4px',
                 cursor: 'pointer'
@@ -113,8 +113,8 @@ export const CrossTransferUI: React.FC<CrossTransferUIProps> = ({ client }) => {
           {/* Tab Bar */}
           <div style={{
             display: 'flex',
-            borderBottom: '1px solid #eee',
-            background: '#fafafa',
+            borderBottom: '1px solid var(--dsw-alias-border-l1)',
+            background: 'var(--dsw-alias-bg-layer-2)',
             padding: '0 16px'
           }}>
             {tabs.map(tab => (
@@ -128,8 +128,8 @@ export const CrossTransferUI: React.FC<CrossTransferUIProps> = ({ client }) => {
                   cursor: 'pointer',
                   fontSize: '14px',
                   fontWeight: activeTab === tab.id ? 600 : 400,
-                  color: activeTab === tab.id ? '#007bff' : '#666',
-                  borderBottom: activeTab === tab.id ? '2px solid #007bff' : '2px solid transparent',
+                  color: activeTab === tab.id ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-label-secondary)',
+                  borderBottom: activeTab === tab.id ? '2px solid var(--dsw-alias-state-business-primary)' : '2px solid transparent',
                   marginBottom: '-1px',
                   display: 'flex',
                   alignItems: 'center',
