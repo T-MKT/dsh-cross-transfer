@@ -160,15 +160,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ client, onRequireRooms }) 
   // 没进房：只给引导，聊天输入与历史请求全部停摆。
   if (joinedRooms.length === 0) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#fff', padding: '24px', gap: '8px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dsw-alias-bg-layer-1)', padding: '24px', gap: '8px' }}>
         <h3 style={{ margin: 0 }}>Chat</h3>
-        <p style={{ margin: 0, color: '#666', fontSize: '14px' }}>
+        <p style={{ margin: 0, color: 'var(--dsw-alias-label-secondary)', fontSize: '14px' }}>
           还没有进入任何房间。聊天需要先创建或加入一个房间。
         </p>
         {onRequireRooms && (
           <button
             onClick={onRequireRooms}
-            style={{ alignSelf: 'flex-start', padding: '6px 12px', background: '#007bff', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
+            style={{ alignSelf: 'flex-start', padding: '6px 12px', background: 'var(--dsw-alias-button-primary-fill)', color: 'var(--dsw-alias-label-primary-inverted)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
           >
             去「Rooms」页签
           </button>
@@ -178,8 +178,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ client, onRequireRooms }) 
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#fff' }}>
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dsw-alias-bg-layer-1)' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--dsw-alias-border-l1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <select
             value={currentRoom}
@@ -199,9 +199,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ client, onRequireRooms }) 
             ))}
           </select>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#666' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
           {participants.map(p => (
-            <span key={p.deviceId} style={{ padding: '2px 6px', background: '#f0f0f0', borderRadius: '10px' }}>
+            <span key={p.deviceId} style={{ padding: '2px 6px', background: 'var(--dsw-alias-bg-layer-2)', borderRadius: '10px' }}>
               {p.deviceName}
             </span>
           ))}
@@ -209,14 +209,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ client, onRequireRooms }) 
       </div>
 
       {typingUsers.size > 0 && (
-        <div style={{ padding: '4px 16px', fontSize: '12px', color: '#666', borderBottom: '1px solid #eee' }}>
+        <div style={{ padding: '4px 16px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', borderBottom: '1px solid var(--dsw-alias-border-l1)' }}>
           {Array.from(typingUsers).map(t => t.split(':')[1]).join(', ')} typing...
         </div>
       )}
 
       <div style={{ flex: 1, overflow: 'auto', padding: '16px', display: 'flex', flexDirection: 'column' }}>
         {messages.length === 0 ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--dsw-alias-label-tertiary)' }}>
             No messages yet. Start the conversation!
           </div>
         ) : (
@@ -234,8 +234,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ client, onRequireRooms }) 
                   maxWidth: '70%',
                   padding: '8px 12px',
                   borderRadius: isOwnMessage(msg) ? '18px 18px 0 18px' : '18px 18px 18px 0',
-                  background: isOwnMessage(msg) ? '#007bff' : '#f0f0f0',
-                  color: isOwnMessage(msg) ? '#fff' : '#333'
+                  background: isOwnMessage(msg) ? 'var(--dsw-alias-button-primary-fill)' : 'var(--dsw-alias-bg-layer-2)',
+                  color: isOwnMessage(msg) ? 'var(--dsw-alias-label-primary-inverted)' : 'var(--dsw-alias-label-primary)'
                 }}
               >
                 {!isOwnMessage(msg) && (
@@ -256,7 +256,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ client, onRequireRooms }) 
         <div ref={messagesEndRef} />
       </div>
 
-      <div style={{ padding: '12px 16px', borderTop: '1px solid #eee', display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--dsw-alias-border-l1)', display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
         <textarea
           value={newMessage}
           onChange={handleTyping}
@@ -267,7 +267,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ client, onRequireRooms }) 
             minHeight: '44px',
             maxHeight: '120px',
             padding: '8px 12px',
-            border: '1px solid #ddd',
+            border: '1px solid var(--dsw-alias-border-l2)',
             borderRadius: '20px',
             resize: 'none',
             fontFamily: 'inherit',
@@ -280,8 +280,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ client, onRequireRooms }) 
           disabled={!newMessage.trim()}
           style={{
             padding: '8px 16px',
-            background: '#007bff',
-            color: '#fff',
+            background: 'var(--dsw-alias-button-primary-fill)',
+            color: 'var(--dsw-alias-label-primary-inverted)',
             border: 'none',
             borderRadius: '20px',
             cursor: newMessage.trim() ? 'pointer' : 'not-allowed',

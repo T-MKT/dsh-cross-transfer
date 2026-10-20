@@ -96,26 +96,26 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
   }
 
   const getStatusColor = (result?: SyncResult) => {
-    if (!result) return '#6c757d'
-    if (result.success) return '#28a745'
-    return '#dc3545'
+    if (!result) return 'var(--dsw-alias-label-secondary)'
+    if (result.success) return 'var(--dsw-alias-state-success-primary)'
+    return 'var(--dsw-alias-state-error-primary)'
   }
 
   return (
     <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', height: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h3 style={{ margin: 0 }}>Git Sync</h3>
-        <button onClick={() => setShowRegisterDialog(true)} style={{ padding: '6px 12px', background: '#28a745', color: '#fff', border: 'none', borderRadius: '4px' }}>
+        <button onClick={() => setShowRegisterDialog(true)} style={{ padding: '6px 12px', background: 'var(--dsw-alias-state-success-primary)', color: 'var(--dsw-alias-label-primary-inverted)', border: 'none', borderRadius: '4px' }}>
           + Add Repository
         </button>
       </div>
 
-      <div style={{ border: '1px solid #ddd', borderRadius: '8px', overflow: 'hidden' }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid #eee' }}>
+      <div style={{ border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px', overflow: 'hidden' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--dsw-alias-border-l1)' }}>
           <select
             value={selectedRepo}
             onChange={(e) => setSelectedRepo(e.target.value)}
-            style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+            style={{ width: '100%', padding: '8px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '4px' }}
           >
             {repos.map(repo => (
               <option key={repo.repoId} value={repo.repoId}>
@@ -130,19 +130,19 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px', marginBottom: '16px' }}>
               <div>
                 <strong>Local Path:</strong>
-                <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#666', wordBreak: 'break-all' }}>
+                <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)', wordBreak: 'break-all' }}>
                   {repos.find(r => r.repoId === selectedRepo)?.localPath}
                 </p>
               </div>
               <div>
                 <strong>Branch:</strong>
-                <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#666' }}>
+                <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' }}>
                   {repos.find(r => r.repoId === selectedRepo)?.branch}
                 </p>
               </div>
               <div>
                 <strong>Auto-sync:</strong>
-                <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#666' }}>
+                <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' }}>
                   {repos.find(r => r.repoId === selectedRepo)?.autoSync ? 'Enabled' : 'Disabled'}
                 </p>
               </div>
@@ -150,7 +150,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
 
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
               <button onClick={() => handleSync('fetch')} disabled={!!syncing} style={{ padding: '8px 16px' }}>Fetch</button>
-              <button onClick={() => handleSync('pull')} disabled={!!syncing} style={{ padding: '8px 16px', background: '#28a745', color: '#fff', border: 'none', borderRadius: '4px' }}>Pull</button>
+              <button onClick={() => handleSync('pull')} disabled={!!syncing} style={{ padding: '8px 16px', background: 'var(--dsw-alias-state-success-primary)', color: 'var(--dsw-alias-label-primary-inverted)', border: 'none', borderRadius: '4px' }}>Pull</button>
               <button onClick={() => handleSync('push')} disabled={!!syncing} style={{ padding: '8px 16px' }}>Push</button>
               <button onClick={() => handleSync('status')} disabled={!!syncing} style={{ padding: '8px 16px' }}>Status</button>
             </div>
@@ -161,12 +161,12 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
                   <span>{syncProgress[syncing].phase}</span>
                   <span>{Math.round((syncProgress[syncing].loaded / syncProgress[syncing].total) * 100)}%</span>
                 </div>
-                <div style={{ height: '6px', background: '#eee', borderRadius: '3px', overflow: 'hidden' }}>
+                <div style={{ height: '6px', background: 'var(--dsw-alias-bg-layer-2)', borderRadius: '3px', overflow: 'hidden' }}>
                   <div
                     style={{
                       width: `${(syncProgress[syncing].loaded / syncProgress[syncing].total) * 100}%`,
                       height: '100%',
-                      background: '#007bff',
+                      background: 'var(--dsw-alias-button-primary-fill)',
                       transition: 'width 0.3s'
                     }}
                   />
@@ -175,13 +175,13 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
             )}
 
             {syncResults[selectedRepo] && (
-              <div style={{ padding: '12px', background: '#f8f9fa', borderRadius: '4px', fontSize: '13px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', maxHeight: '300px', overflow: 'auto' }}>
+              <div style={{ padding: '12px', background: 'var(--dsw-alias-bg-layer-2)', borderRadius: '4px', fontSize: '13px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', maxHeight: '300px', overflow: 'auto' }}>
                 <div style={{ color: getStatusColor(syncResults[selectedRepo]), fontWeight: 'bold', marginBottom: '8px' }}>
                   {syncResults[selectedRepo].success ? 'Success' : 'Failed'} - {syncResults[selectedRepo].operation}
                 </div>
                 <div>{syncResults[selectedRepo].output || syncResults[selectedRepo].error || 'No output'}</div>
                 {syncResults[selectedRepo].conflicts && syncResults[selectedRepo].conflicts.length > 0 && (
-                  <div style={{ marginTop: '8px', color: '#dc3545' }}>
+                  <div style={{ marginTop: '8px', color: 'var(--dsw-alias-state-error-primary)' }}>
                     <strong>Conflicts:</strong>
                     <ul style={{ margin: '4px 0 0', paddingLeft: '20px' }}>
                       {syncResults[selectedRepo].conflicts.map(c => <li key={c}>{c}</li>)}
@@ -194,7 +194,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
         )}
 
         {repos.length === 0 && (
-          <div style={{ padding: '32px', textAlign: 'center', color: '#999' }}>
+          <div style={{ padding: '32px', textAlign: 'center', color: 'var(--dsw-alias-label-tertiary)' }}>
             No repositories configured. Click "Add Repository" to get started.
           </div>
         )}
@@ -202,7 +202,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
 
       {showRegisterDialog && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#fff', padding: '24px', borderRadius: '12px', minWidth: '400px', maxHeight: '90vh', overflow: 'auto' }}>
+          <div style={{ background: 'var(--dsw-alias-bg-layer-1)', padding: '24px', borderRadius: '12px', minWidth: '400px', maxHeight: '90vh', overflow: 'auto' }}>
             <h3 style={{ margin: '0 0 16px' }}>Register Repository</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>
@@ -211,7 +211,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
                   value={registerForm.name}
                   onChange={(e) => setRegisterForm(prev => ({ ...prev, name: e.target.value }))}
                   placeholder="My Project"
-                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  style={{ width: '100%', padding: '8px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '4px' }}
                 />
               </div>
               <div>
@@ -220,7 +220,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
                   value={registerForm.localPath}
                   onChange={(e) => setRegisterForm(prev => ({ ...prev, localPath: e.target.value }))}
                   placeholder="/path/to/local/repo"
-                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  style={{ width: '100%', padding: '8px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '4px' }}
                 />
               </div>
               <div>
@@ -229,7 +229,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
                   value={registerForm.remoteUrl}
                   onChange={(e) => setRegisterForm(prev => ({ ...prev, remoteUrl: e.target.value }))}
                   placeholder="https://github.com/user/repo.git"
-                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  style={{ width: '100%', padding: '8px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '4px' }}
                 />
               </div>
               <div>
@@ -238,7 +238,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
                   value={registerForm.branch}
                   onChange={(e) => setRegisterForm(prev => ({ ...prev, branch: e.target.value }))}
                   placeholder="main"
-                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  style={{ width: '100%', padding: '8px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '4px' }}
                 />
               </div>
               <div>
@@ -246,7 +246,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
                 <select
                   value={registerForm.authType}
                   onChange={(e) => setRegisterForm(prev => ({ ...prev, authType: e.target.value as 'token' | 'ssh' }))}
-                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  style={{ width: '100%', padding: '8px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '4px' }}
                 >
                   <option value="token">Token (HTTPS)</option>
                   <option value="ssh">SSH Key</option>
@@ -260,7 +260,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
                       value={registerForm.username}
                       onChange={(e) => setRegisterForm(prev => ({ ...prev, username: e.target.value }))}
                       placeholder="oauth2 or username"
-                      style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                      style={{ width: '100%', padding: '8px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '4px' }}
                     />
                   </div>
                   <div>
@@ -270,7 +270,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
                       value={registerForm.token}
                       onChange={(e) => setRegisterForm(prev => ({ ...prev, token: e.target.value }))}
                       placeholder="Personal access token"
-                      style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                      style={{ width: '100%', padding: '8px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '4px' }}
                     />
                   </div>
                 </>
@@ -286,7 +286,7 @@ export const GitSyncPanel: React.FC<GitSyncPanelProps> = ({ client }) => {
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
               <button onClick={() => setShowRegisterDialog(false)} style={{ padding: '8px 16px' }}>Cancel</button>
-              <button onClick={handleRegister} style={{ padding: '8px 16px', background: '#28a745', color: '#fff', border: 'none', borderRadius: '4px' }}>Register</button>
+              <button onClick={handleRegister} style={{ padding: '8px 16px', background: 'var(--dsw-alias-state-success-primary)', color: 'var(--dsw-alias-label-primary-inverted)', border: 'none', borderRadius: '4px' }}>Register</button>
             </div>
           </div>
         </div>

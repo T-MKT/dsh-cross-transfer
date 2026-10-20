@@ -166,11 +166,11 @@ export const FileTransferPanel: React.FC<FileTransferPanelProps> = ({ client }) 
         onDragOver={handleDrag}
         onDrop={handleDrop}
         style={{
-          border: `2px dashed ${dragActive ? '#007bff' : '#ccc'}`,
+          border: `2px dashed ${dragActive ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-label-caption)'}`,
           borderRadius: '8px',
           padding: '32px',
           textAlign: 'center',
-          backgroundColor: dragActive ? '#e7f3ff' : '#fafafa',
+          backgroundColor: dragActive ? 'var(--dsw-alias-state-business-tertiary)' : 'var(--dsw-alias-bg-layer-2)',
           transition: 'all 0.2s',
           flex: 1
         }}
@@ -185,19 +185,19 @@ export const FileTransferPanel: React.FC<FileTransferPanelProps> = ({ client }) 
           }}
         />
         <label htmlFor="file-input" style={{ cursor: 'pointer' }}>
-          <p style={{ margin: '0 0 8px', fontSize: '18px', color: dragActive ? '#007bff' : '#333' }}>
+          <p style={{ margin: '0 0 8px', fontSize: '18px', color: dragActive ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-label-primary)' }}>
             {dragActive ? 'Drop file here' : 'Drag & drop a file or click to select'}
           </p>
-          <p style={{ margin: 0, color: '#666', fontSize: '14px' }}>
+          <p style={{ margin: 0, color: 'var(--dsw-alias-label-secondary)', fontSize: '14px' }}>
             Max file size: 1GB
           </p>
         </label>
       </div>
 
       {file && (
-        <div style={{ padding: '12px', background: '#f0f0f0', borderRadius: '8px' }}>
+        <div style={{ padding: '12px', background: 'var(--dsw-alias-bg-layer-2)', borderRadius: '8px' }}>
           <p style={{ margin: '0 0 4px', fontWeight: 500 }}>{file.name}</p>
-          <p style={{ margin: 0, color: '#666', fontSize: '14px' }}>
+          <p style={{ margin: 0, color: 'var(--dsw-alias-label-secondary)', fontSize: '14px' }}>
             {formatSize(file.size)} • {file.type || 'Unknown type'}
           </p>
         </div>
@@ -206,14 +206,14 @@ export const FileTransferPanel: React.FC<FileTransferPanelProps> = ({ client }) 
       <div style={{ flex: 1, overflow: 'auto' }}>
         <h4 style={{ margin: '0 0 12px' }}>Transfer History</h4>
         {transfers.size === 0 ? (
-          <p style={{ color: '#999', textAlign: 'center', padding: '24px' }}>No transfers yet</p>
+          <p style={{ color: 'var(--dsw-alias-label-tertiary)', textAlign: 'center', padding: '24px' }}>No transfers yet</p>
         ) : (
           Array.from(transfers.values()).map(info => (
             <div
               key={info.fileId}
               style={{
                 padding: '12px',
-                borderBottom: '1px solid #eee',
+                borderBottom: '1px solid var(--dsw-alias-border-l1)',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center'
@@ -221,15 +221,15 @@ export const FileTransferPanel: React.FC<FileTransferPanelProps> = ({ client }) 
             >
               <div style={{ flex: 1 }}>
                 <p style={{ margin: '0 0 4px', fontWeight: 500 }}>{info.fileName}</p>
-                <p style={{ margin: 0, fontSize: '12px', color: '#666' }}>
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
                   {formatSize(info.fileSize)} • {info.senderDeviceName} → You
                 </p>
-                <div style={{ marginTop: '8px', height: '6px', background: '#eee', borderRadius: '3px', overflow: 'hidden' }}>
+                <div style={{ marginTop: '8px', height: '6px', background: 'var(--dsw-alias-bg-layer-2)', borderRadius: '3px', overflow: 'hidden' }}>
                   <div
                     style={{
                       width: `${info.progress}%`,
                       height: '100%',
-                      background: info.status === 'complete' ? '#28a745' : info.status === 'failed' ? '#dc3545' : '#007bff',
+                      background: info.status === 'complete' ? 'var(--dsw-alias-state-success-primary)' : info.status === 'failed' ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-button-primary-fill)',
                       transition: 'width 0.3s'
                     }}
                   />
@@ -241,8 +241,8 @@ export const FileTransferPanel: React.FC<FileTransferPanelProps> = ({ client }) 
                   borderRadius: '12px',
                   fontSize: '12px',
                   fontWeight: 500,
-                  background: info.status === 'complete' ? '#d4edda' : info.status === 'failed' ? '#f8d7da' : info.status === 'receiving' ? '#cce5ff' : '#fff3cd',
-                  color: info.status === 'complete' ? '#155724' : info.status === 'failed' ? '#721c24' : info.status === 'receiving' ? '#004085' : '#856404'
+                  background: info.status === 'complete' ? 'var(--dsw-alias-state-success-tertiary)' : info.status === 'failed' ? 'var(--dsw-alias-interactive-bg-hover-danger)' : info.status === 'receiving' ? 'var(--dsw-alias-state-business-tertiary)' : 'var(--dsw-alias-state-warn-tertiary)',
+                  color: info.status === 'complete' ? 'var(--dsw-alias-label-primary)' : info.status === 'failed' ? 'var(--dsw-alias-state-error-primary)' : info.status === 'receiving' ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-state-warn-label)'
                 }}
               >
                 {info.status}

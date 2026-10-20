@@ -74,7 +74,7 @@ async function inspect(url) {
 
   const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const graphRow = new RegExp(`"id":"${escape(pluginId)}"[^}]*`, 'u').exec(html)?.[0] ?? null
-  const combo = new RegExp(`/plugins/\\?\\?${escape(pluginId)}/client\\.js[^"'&]*&rev=[^"&]*`, 'u').exec(html)?.[0] ?? null
+  const combo = new RegExp(`plugins/\\?\\?${escape(pluginId)}/client\\.js[^"'&]*&rev=[^"&]*`, 'u').exec(html)?.[0] ?? null
 
   let bundleHasMarker = false
   let bundleBytes = 0
