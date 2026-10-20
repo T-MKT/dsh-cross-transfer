@@ -35,8 +35,22 @@ export const CrossTransferLauncher: React.FC<CrossTransferLauncherProps> = ({ wi
   const [open, setOpen] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [anchor, setAnchor] = useState<PanelAnchor>()
+  // isConnected() is a snapshot; without a subscription the sidebar dot stays
+  // stale until something else re-renders the button.
+  const [connected, setConnected] = useState(() => client.isConnected())
   const rootRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const sync = () => setConnected(client.isConnected())
+    sync()
+    const offConnected = client.on('connected', sync)
+    const offDisconnected = client.on('disconnected', sync)
+    return () => {
+      offConnected()
+      offDisconnected()
+    }
+  }, [client])
 
   // Anchor the panel to the trigger; re-place it when the viewport changes.
   useLayoutEffect(() => {
@@ -132,17 +146,17 @@ export const CrossTransferLauncher: React.FC<CrossTransferLauncherProps> = ({ wi
             >
               Cross Transfer
             </span>
-            <span
-              aria-hidden="true"
-              title={client.isConnected() ? 'Connected' : 'Disconnected'}
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                flex: 'none',
-                background: client.isConnected() ? '#28a745' : '#dc3545'
-              }}
-            />
+              <span
+                aria-hidden="true"
+                title={connected ? 'Connected' : 'Disconnected'}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  flex: 'none',
+                  background: connected ? '#28a745' : '#dc3545'
+                }}
+              />
           </>
         )}
       </button>
