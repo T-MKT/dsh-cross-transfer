@@ -11,6 +11,7 @@ DSH (DeepSeek Helper) 宿主插件：跨设备文件传输、房间化聊天与 
 - **设备发现**：`GET /devices`、`GET /sessions` 查询在线设备与会话
 - **文件传输**：REST 发起 + WS 分片转发，大小/分片可配
 - **Git 同步**：仓库注册与 isomorphic-git 同步
+- **房间 Git 工作区同步**：房主为房间设置 http(s) 仓库，成员各自绑定宿主本机工作区目录，AI 回合结束后默认提交并推送到该仓库
 - **自动重连**：客户端断线 3s 退避重连，重连后凭内存密码自动重进房间
 
 ## 架构
@@ -62,6 +63,12 @@ pnpm add dsh-cross-transfer
           closeWhenOwnerLeaves: true
           discoverableByDefault: true
           allowRoomList: true
+        roomGit:                 # 整块可省略，缺省取下列默认值
+          enabled: true
+          debounceMs: 1500
+          pushTimeoutMs: 60000
+          maxBindingsPerRoom: 16
+          maxCandidates: 50
 ```
 
 宿主插件会：
@@ -172,6 +179,125 @@ pnpm add dsh-cross-transfer
 
 ---
 
+## 房间 Git 工作区同步
+
+房主给房间配一个 **http(s)** Git 仓库，房间成员各自把**宿主本机的一个工作区目录**绑定到该房间；AI 在该目录里改完文件（一个 AI 回合结束）后，插件**默认**把这些改动提交并推送到房间仓库。手动「立即同步」始终可用，失败一定可见（状态里带错误），绝不静默。
+
+### 流程
+
+1. 房主建房时（`repo?` 字段）或进房后（`room-git-config` / `PUT /rooms/:roomId/git`）配置远端、分支、令牌与自动提交/自动推送开关；不配置房间照常可用，只是没有同步
+2. 成员把本机工作区目录绑定到房间：服务端校验「绝对路径 + 存在 + 是目录」后，把该目录初始化为 Git 仓库（还不是仓库则 `git init`）、把 `origin` 设为房间远端
+3. AI 回合结束时宿主 `workspace/changes` 事件带出本次变更的 `cwd` 与文件数；命中某个绑定目录即按 `debounceMs`（默认 1500ms）合并触发一次同步：暂存全部改动（新增/修改/删除）→ **有变化才提交** → 按 `autoPush` 推送
+4. 结果（含失败）写进该绑定的 `lastSync` 并广播 `room-git-sync-result`；`autoPush: false` 时只提交不推送（`pushed: false`）
+5. 手动同步不受 `autoCommit` 影响（手动 = 用户明确要求，仍会提交）；`autoCommit: false` 只跳过自动触发
+
+提交信息形如 `chore(cross-transfer): <房间名或 roomId> 自动同步 <N> 个文件`，`N` 超过 20 时截断展示并附 `…(+K)`。同一绑定的同步按 `roomId + deviceId` 串行：运行期间来的触发只置脏标记，结束后补跑一次，不会并发跑两次 git。
+
+### 配置项（`roomGit`，整块可省略）
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `enabled` | boolean | `true` | 总开关；`false` 时配置/清空/绑定/解绑/同步一律 `403 forbidden`（读取不受影响） |
+| `debounceMs` | number | `1500` | 自动同步的合并窗口（毫秒） |
+| `pushTimeoutMs` | number | `60000` | 单次提交+推送的超时（毫秒） |
+| `maxBindingsPerRoom` | number | `16` | 每房间最多保留的绑定数；同设备重复绑定算更新，超限 → `400 invalid-argument` |
+| `maxCandidates` | number | `50` | 候选工作区目录的返回上限 |
+
+### REST 路由
+
+| 方法 | 路径 | 鉴权 | 请求体 | 成功响应 |
+|---|---|---|---|---|
+| GET | `/rooms/:roomId/git` | 该房票据 | — | `200 RoomRepoStatus` |
+| PUT | `/rooms/:roomId/git` | 房主票据 | `RoomRepoConfigInput` | `200 RoomRepoStatus` |
+| DELETE | `/rooms/:roomId/git` | 房主票据 | — | `200 RoomRepoStatus` |
+| PUT | `/rooms/:roomId/workspace` | 该房票据 | `{ path: string }` | `200 RoomRepoStatus` |
+| DELETE | `/rooms/:roomId/workspace` | 该房票据 | — | `200 RoomRepoStatus` |
+| POST | `/rooms/:roomId/git/sync` | 该房票据 | — | `200 { roomId, result: SyncSummary }` |
+| GET | `/rooms/:roomId/workspaces` | 该房票据 | — | `200 { roomId, paths: string[] }` |
+
+方法不在表内 → `405`；`:roomId` 形状不合法 → `404`（与既有房间路由一致）。`POST /rooms/create` 的 body 可带可选 `repo: RoomRepoConfigInput`：建房前先做纯校验（不联网、不落盘），失败直接回错误、不建房；建房成功后立即配置仓库。
+
+### WS 消息
+
+| type | 鉴权 | payload | 应答 type | 应答 payload |
+|---|---|---|---|---|
+| `room-git-config` | 房主（服务层再校验） | `{ roomId, repo: RoomRepoConfigInput }` | `room-git-status` | `RoomRepoStatus` |
+| `room-git-clear` | 房主 | `{ roomId }` | `room-git-status` | `RoomRepoStatus` |
+| `room-git-status` | 成员 | `{ roomId }` | `room-git-status` | `RoomRepoStatus` |
+| `room-workspace-bind` | 成员 | `{ roomId, path }` | `room-git-status` | `RoomRepoStatus` |
+| `room-workspace-unbind` | 成员 | `{ roomId }` | `room-git-status` | `RoomRepoStatus` |
+| `room-workspace-candidates` | 成员 | `{ roomId }` | `room-workspace-candidates` | `{ roomId, paths: string[] }` |
+| `room-git-sync` | 成员 | `{ roomId }` | `room-git-sync-result` | `{ roomId, result: SyncSummary }` |
+
+`room-create` 的 payload 可带可选 `repo?: RoomRepoConfigInput`，语义与 REST 建房一致。服务端推送（`deviceId: 'server'`）：`room-git-status`（payload `RoomRepoStatus`，**按接收者逐个投影**，工作区路径只对绑定者本人与房主可见）与 `room-git-sync-result`（payload `{ roomId, deviceId, result }`，广播给房内成员）。被踢/退房时插件顺带清掉该设备在本房的绑定，失败忽略。
+
+### 数据形状
+
+```typescript
+/** 配置入参：remoteUrl 允许内嵌 userinfo，会被抽成 auth 并从存储值里剥离 */
+interface RoomRepoConfigInput {
+  remoteUrl: string          // 必须是 http:// 或 https://
+  branch?: string            // 默认 'main'
+  auth?: { type: 'token'; token: string; username?: string }
+  autoCommit?: boolean       // 默认 true
+  autoPush?: boolean         // 默认 true
+  commitAuthorName?: string  // 默认 'dsh-cross-transfer'
+  commitAuthorEmail?: string // 默认 'cross-transfer@dsh.local'
+}
+
+/** 对外投影：绝不包含 token、绝不包含未剥离 userinfo 的 URL */
+interface RoomRepoStatus {
+  roomId: string
+  configured: boolean
+  remoteUrl?: string                 // 已剥离 userinfo；未配置时省略
+  branch?: string
+  authConfigured: boolean
+  autoCommit: boolean
+  autoPush: boolean
+  updatedAt?: number
+  updatedByDeviceId?: string         // 脱敏
+  bindings: WorkspaceBindingStatus[]
+}
+
+interface WorkspaceBindingStatus {
+  deviceId: string                   // 脱敏
+  deviceName: string
+  bound: boolean
+  workspacePath?: string             // 只对绑定者本人与房主返回真实路径
+  repoReady?: boolean
+  lastSync?: SyncSummary
+}
+
+interface SyncSummary {
+  at: number
+  ok: boolean
+  trigger: 'auto' | 'manual'
+  committed: number                  // 本次提交的文件数（含删除）
+  commitOid?: string
+  pushed: boolean
+  error?: string
+}
+```
+
+### 安全边界
+
+- **token 只在宿主进程内存里**：`auth.token` 不落盘、不进任何响应/推送/日志；绑定工作区时也**不写** `credential.helper`（旧仓库注册路径会把明文 token 写进 `.git/config`，这条新路径只走内存回调）
+- **URL 脱敏**：远端 URL 内嵌的 userinfo（`https://user:token@host/…`）会被抽取成 `auth` 并从存储值与所有投影里剥离；同时给 `auth` 与内嵌 userinfo → `400 invalid-repo`。`RoomInfo` 只暴露布尔位 `repoConfigured`，连 URL 都不给
+- **路径只对本人与房主可见**：`WorkspaceBindingStatus.workspacePath` 只对绑定者本人与房主返回真实宿主路径，其他成员看到 `undefined`；广播按会话逐个投影，不会把别人的宿主目录发给全房间
+- **仅 http(s)**：isomorphic-git 只实现了 http(s) 传输，`remoteUrl` 只接受 `http://` / `https://`（其余协议 → `400 invalid-repo`），SSH 未实现
+- **非快进 push 会失败**：不做自动 pull、不做冲突合并。远端有新提交时 push 被拒，结果里 `ok=false` 且带错误文本（截断到 500 字符），需要用户手动 `git pull` 后重新同步；提交仍然落在本地
+- **凭据即写权限**：token 泄露等同该远端仓库的写权限泄露；没有 token 轮换 UI，换令牌等于重新配置仓库
+
+### 明确不做（v1 范围外）
+
+- SSH 远端、本地目录 / `file://` 远端（isomorphic-git 不支持）
+- 自动 pull / 自动解决冲突 / 非快进合并（失败可见，交给用户手动 pull）
+- 文件级实时（每次 write）同步：只在 AI 回合结束时按 `workspace/changes` 触发
+- 浏览器选择宿主目录的原生文件对话框（浏览器拿不到宿主路径，用候选列表 + 文本输入）
+- 变更历史 / 回滚 UI
+
+---
+
 ## WebSocket 连接
 
 ```
@@ -214,7 +340,7 @@ interface WSMessage {
 
 | type | 附加鉴权 | payload | 应答 type | 应答 payload |
 |---|---|---|---|---|
-| `room-create` | 已登记设备 | `{ roomId?, name?, password, maxMembers?, discoverable? }` | `room-created` | `RoomJoinResult` |
+| `room-create` | 已登记设备 | `{ roomId?, name?, password, maxMembers?, discoverable?, repo? }`（`repo` 为可选 `RoomRepoConfigInput`） | `room-created` | `RoomJoinResult` |
 | `room-join` | 已登记设备 | `{ roomId, password }` | `room-joined` | `RoomJoinResult` |
 | `room-leave` | 该会话是成员 | `{ roomId }` | `room-left` | `RoomLeaveResult`（同设备其它会话另收一帧 `room-left`） |
 | `room-close` | 房主 | `{ roomId }` | `room-closed` | `{ roomId, reason: 'closed-by-owner' }` |
@@ -226,6 +352,13 @@ interface WSMessage {
 | `chat-message` | 该会话是成员 | `{ roomId, content, type?, metadata?, replyTo? }`（`type` ∈ `text`/`code`/`file`，默认 `text`；content 非空、≤10000 字符） | `chat-message-ack` | `ChatMessage`（落库后，只回发送会话） |
 | `chat-history-request` | 该会话是成员 | `{ roomId, limit? }`（limit 为 1~1000 整数，默认 100） | `chat-history` | `{ roomId, messages: ChatMessage[] }` |
 | `typing` | 该会话是成员 | `{ roomId, isTyping }` | （无应答） | — |
+| `room-git-config` | 该会话是成员（房主才能成功，否则 `forbidden`） | `{ roomId, repo: RoomRepoConfigInput }` | `room-git-status` | `RoomRepoStatus` |
+| `room-git-clear` | 该会话是成员（房主） | `{ roomId }` | `room-git-status` | `RoomRepoStatus` |
+| `room-git-status` | 该会话是成员 | `{ roomId }` | `room-git-status` | `RoomRepoStatus` |
+| `room-workspace-bind` | 该会话是成员 | `{ roomId, path }` | `room-git-status` | `RoomRepoStatus` |
+| `room-workspace-unbind` | 该会话是成员 | `{ roomId }` | `room-git-status` | `RoomRepoStatus` |
+| `room-workspace-candidates` | 该会话是成员 | `{ roomId }` | `room-workspace-candidates` | `{ roomId, paths: string[] }` |
+| `room-git-sync` | 该会话是成员 | `{ roomId }` | `room-git-sync-result` | `{ roomId, result: SyncSummary }` |
 
 未列出的 `room-*` 类型或 payload 带 `roomId` 的自定义 type → `error{ code: 'invalid-argument' }`，绝不放行。
 
@@ -247,6 +380,8 @@ interface WSMessage {
 | `owner-changed` | 成员会话 | `{ roomId, newOwnerDeviceId }` |
 | `chat-message` | 房内成员会话，排除发送会话 | `ChatMessage` |
 | `typing` | 房内成员会话，排除发送会话 | `{ roomId, deviceId, deviceName, isTyping }` |
+| `room-git-status` | 房内成员会话（**逐会话投影**，路径只对本人与房主可见） | `RoomRepoStatus` |
+| `room-git-sync-result` | 房内成员会话 | `{ roomId, deviceId, result: SyncSummary }` |
 | `pong` | 发起 `ping` 的会话 | 时间戳（number） |
 
 ### 错误帧
@@ -256,7 +391,7 @@ interface WSMessage {
 ```
 
 - `retryAfterMs` 仅 `too-many-attempts` 出现
-- `code` 取值（`RoomErrorCode` 全表）：`room-not-found` / `room-exists` / `room-closed` / `room-full` / `room-locked` / `too-many-rooms` / `room-code-exhausted` / `invalid-room-id` / `invalid-password` / `invalid-argument` / `wrong-password` / `invalid-ticket` / `invalid-device` / `too-many-attempts` / `not-a-member` / `forbidden` / `room-gate-unavailable` / `internal-error`
+- `code` 取值（`RoomErrorCode` 全表）：`room-not-found` / `room-exists` / `room-closed` / `room-full` / `room-locked` / `too-many-rooms` / `room-code-exhausted` / `invalid-room-id` / `invalid-password` / `invalid-argument` / `wrong-password` / `invalid-ticket` / `invalid-device` / `too-many-attempts` / `not-a-member` / `forbidden` / `invalid-repo` / `invalid-workspace` / `sync-failed` / `room-gate-unavailable` / `internal-error`
 - 门禁未安装时房间消息回 `room-gate-unavailable`（fail-closed）
 
 ### 宿主插件订阅者注意（`message` 事件）
@@ -280,7 +415,7 @@ WSServer 的 `'message'` 事件对**所有成功解析的帧**都发（含被门
 
 | 方法 | 路径 | 鉴权 | 请求体 | 成功响应 |
 |---|---|---|---|---|
-| POST | `/rooms/create` | `Bearer <deviceSecret>`（缺 → `401 invalid-device`） | `{ roomId?, name?, password, maxMembers?, discoverable? }` | `200 RoomJoinResult` |
+| POST | `/rooms/create` | `Bearer <deviceSecret>`（缺 → `401 invalid-device`） | `{ roomId?, name?, password, maxMembers?, discoverable?, repo? }`（`repo` 为可选 `RoomRepoConfigInput`，建房前纯校验，失败不建房） | `200 RoomJoinResult`（带 `repo` 时 `room` 为配置后的最新投影） |
 | POST | `/rooms/join` | 密码即凭据；body 必须带 `deviceSecret` | `{ roomId, password, deviceSecret, deviceName? }` | `200 RoomJoinResult` |
 | GET | `/rooms` | 无 | — | `200 { rooms: RoomInfo[] }`（只含 discoverable 房间，deviceId 脱敏）；`allowRoomList=false` → `403 forbidden` |
 | GET | `/rooms/:roomId` | 该房票据 | — | `200 { room: RoomInfo }` |
@@ -290,6 +425,13 @@ WSServer 的 `'message'` 事件对**所有成功解析的帧**都发（含被门
 | POST | `/rooms/:roomId/lock` | 房主票据 | `{ locked }` | `200 { roomId, locked }` |
 | DELETE | `/rooms/:roomId/members/:deviceId` | 该房票据 | — | `200 { roomId, deviceId, removed, self: true }`。**仅支持自助退房**：路径 `deviceId` 必须等于票据持有者，否则 `403 forbidden`；踢人请走 WS `room-kick`（REST 拿不到可比对的真实 id） |
 | GET | `/chat/history?roomId=<id>&limit=<n>` | 该房票据 + 仍是成员 | — | `200 { roomId, messages: ChatMessage[] }`；不带票据 → `401 invalid-ticket` |
+| GET | `/rooms/:roomId/git` | 该房票据 | — | `200 RoomRepoStatus` |
+| PUT | `/rooms/:roomId/git` | 房主票据 | `RoomRepoConfigInput` | `200 RoomRepoStatus` |
+| DELETE | `/rooms/:roomId/git` | 房主票据 | — | `200 RoomRepoStatus` |
+| PUT | `/rooms/:roomId/workspace` | 该房票据 | `{ path }` | `200 RoomRepoStatus` |
+| DELETE | `/rooms/:roomId/workspace` | 该房票据 | — | `200 RoomRepoStatus` |
+| POST | `/rooms/:roomId/git/sync` | 该房票据 | — | `200 { roomId, result: SyncSummary }` |
+| GET | `/rooms/:roomId/workspaces` | 该房票据 | — | `200 { roomId, paths: string[] }` |
 
 ### 既有路由（未变）
 
@@ -301,7 +443,7 @@ WSServer 的 `'message'` 事件对**所有成功解析的帧**都发（含被门
 
 ### 404 / 405 边界
 
-- 路径命中房间路由表（`/rooms`、`/rooms/:roomId` 及其 `/members|/close|/password|/lock`、`/rooms/:roomId/members/:deviceId`）但方法不在表内 → **405** `{ error: { code: 'invalid-argument', message: 'Method not allowed' } }`
+- 路径命中房间路由表（`/rooms`、`/rooms/:roomId` 及其 `/members|/close|/password|/lock|/git|/workspace|/workspaces`、`/rooms/:roomId/git/sync`、`/rooms/:roomId/members/:deviceId`）但方法不在表内 → **405** `{ error: { code: 'invalid-argument', message: 'Method not allowed' } }`
 - 表未列的 `/rooms/*` 子路径 → **404** `{ error: 'Not found' }`
 - 既有路由（`/devices`、`/sessions`、`/files/initiate`、`/git/*`）方法不匹配即落空 → **404**（现状）
 
@@ -315,7 +457,7 @@ WSServer 的 `'message'` 事件对**所有成功解析的帧**都发（含被门
 
 | code | HTTP |
 |---|---|
-| `invalid-room-id` / `invalid-password` / `invalid-argument` | 400 |
+| `invalid-room-id` / `invalid-password` / `invalid-argument` / `invalid-repo` / `invalid-workspace` | 400 |
 | `wrong-password` / `invalid-ticket` / `invalid-device` | 401 |
 | `not-a-member` / `forbidden` | 403 |
 | `room-not-found` | 404 |
@@ -323,10 +465,13 @@ WSServer 的 `'message'` 事件对**所有成功解析的帧**都发（含被门
 | `room-closed` | 410 |
 | `room-locked` | 423 |
 | `too-many-attempts` / `too-many-rooms` | 429 |
+| `sync-failed` | 502 |
 | `room-code-exhausted` / `room-gate-unavailable` | 503 |
 | `internal-error` | 500 |
 
 既有路由的错误体保持 `{ error: '...' }` 字符串形态。
+
+`sync-failed` 是「同步动作本身抛异常」（例如绑定已不存在、仓库未配置）的兜底码：正常的 push/commit 失败**不抛**，而是在 `SyncSummary` 里返回 `ok: false` + `error`。
 
 ### 数据形状
 
@@ -343,6 +488,7 @@ interface RoomInfo {
   maxMembers: number
   locked: boolean
   discoverable: boolean
+  repoConfigured: boolean    // 只暴露布尔位，绝不暴露仓库 URL（见「房间 Git 工作区同步」）
 }
 
 /** 成员视图。deviceId 脱敏（房主视角的 room-members 响应除外）；sessionIds 永不外泄 */
@@ -428,7 +574,7 @@ const client = new CrossTransferClient(ctx, {
 ### 房间 API
 
 ```typescript
-await client.createRoom({ roomId?, name?, password, maxMembers?, discoverable? }) // → ActiveRoom
+await client.createRoom({ roomId?, name?, password, maxMembers?, discoverable?, repo? }) // → ActiveRoom
 await client.joinRoom(roomId, password)          // → ActiveRoom
 await client.leaveRoom(roomId)
 await client.closeRoom(roomId)                   // 仅房主
@@ -443,6 +589,13 @@ client.setTyping(roomId, isTyping)
 client.getJoinedRooms()                          // → ActiveRoom[]
 client.getActiveRoom()                           // → ActiveRoom | null
 client.getRoomPassword(roomId)                   // 仅内存中的密码
+await client.setRoomGit(roomId, repo)            // 仅房主；repo: RoomRepoConfigInput → RoomRepoStatus
+await client.clearRoomGit(roomId)                // 仅房主 → RoomRepoStatus
+await client.getRoomGitStatus(roomId)            // → RoomRepoStatus
+await client.bindRoomWorkspace(roomId, path)     // → RoomRepoStatus
+await client.unbindRoomWorkspace(roomId)         // → RoomRepoStatus
+await client.listWorkspaceCandidates(roomId)     // → string[]
+await client.syncRoomGit(roomId)                 // 手动同步 → SyncSummary
 client.setActiveRoom(roomId)
 await client.ensureDeviceRegistered()
 ```
@@ -462,6 +615,8 @@ await client.ensureDeviceRegistered()
 | `roomMemberKicked` | `(roomId, deviceId, kickedByDeviceId)` |
 | `roomLocked` | `(roomId, locked)` |
 | `roomPasswordChanged` | `(roomId)` |
+| `roomGitStatus` | `(status: RoomRepoStatus)`（仅服务端推送形态；带 `messageId` 的应答用于兑现方法 promise） |
+| `roomGitSync` | `(roomId, deviceId, result: SyncSummary)`（仅推送形态） |
 | `activeRoomChanged` | `(room: ActiveRoom \| null)` |
 | `chatMessage` | `(message: ChatMessage)` |
 | `chatHistory` | `(messages: ChatMessage[])` |
@@ -484,7 +639,7 @@ await client.ensureDeviceRegistered()
 
 ### UI 组件
 
-- `RoomPanel`：建房/进房表单、已加入房间列表、成员列表（在线位 + 房主标记 + 踢人）、房主操作（改密/锁房/关房）、可发现房间列表、错误提示（含 `retryAfterMs` 倒数）
+- `RoomPanel`：建房/进房表单、已加入房间列表、成员列表（在线位 + 房主标记 + 踢人）、房主操作（改密/锁房/关房）、可发现房间列表、错误提示（含 `retryAfterMs` 倒数）；建房表单含折叠区「Git 仓库（可选）」，房内另有「仓库与工作区」区块（房主配仓库、成员绑定本机工作区 + 候选目录 `datalist` + 绑定/解绑/立即同步、成员同步状态列表）
 - `CrossTransferUI`：内置 `Rooms` 标签页
 - 其余面板：`FileTransferPanel`、`ChatPanel`、`GitSyncPanel`、`DeviceList`
 
@@ -499,6 +654,7 @@ await client.ensureDeviceRegistered()
 | `maxFileSize` | number | `1073741824` | 单文件大小上限（1GB） |
 | `chunkSize` | number | `1048576` | 文件分片大小（1MB） |
 | `rooms` | object | 见下 | 房间机制配置；整块可省略 |
+| `roomGit` | object | 见下 | 房间 Git 工作区同步配置；整块可省略 |
 
 `rooms` 配置块（13 项，全部有默认值，可部分覆盖）：
 
@@ -517,6 +673,16 @@ await client.ensureDeviceRegistered()
 | `closeWhenOwnerLeaves` | boolean | `true` | 房主退房即关房；`false` 则自动移交房主 |
 | `discoverableByDefault` | boolean | `true` | 建房默认出现在房间列表 |
 | `allowRoomList` | boolean | `true` | 是否开放房间列表；`false` 时 REST `/rooms` 与 WS `room-list` 一律 `403 forbidden` |
+
+`roomGit` 配置块（5 项，全部有默认值，可部分覆盖；`enabled: false` 时所有写操作 `403 forbidden`）：
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `enabled` | boolean | `true` | 房间 Git 工作区同步总开关 |
+| `debounceMs` | number | `1500` | 自动同步的合并窗口（毫秒） |
+| `pushTimeoutMs` | number | `60000` | 单次提交+推送的超时（毫秒） |
+| `maxBindingsPerRoom` | number | `16` | 每房间最多保留的绑定数（同设备重复绑定算更新） |
+| `maxCandidates` | number | `50` | 候选工作区目录的返回上限 |
 
 ## 开发
 

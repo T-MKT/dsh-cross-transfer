@@ -1,5 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { CrossTransferClient, RoomRequestError, type ActiveRoom, type ChatMessage } from './CrossTransferClient.js'
+import {
+  CrossTransferClient,
+  RoomRequestError,
+  type ActiveRoom,
+  type ChatMessage,
+  type RoomRepoConfigInput,
+  type RoomRepoStatus,
+  type SyncSummary
+} from './CrossTransferClient.js'
 import type { RoomErrorCode, RoomInfo, RoomMember, RoomRole } from '../rooms.js'
 
 interface RoomPanelProps {
@@ -26,6 +34,10 @@ const ERROR_TEXT: Record<RoomErrorCode, string> = {
   'invalid-room-id': '房号格式不对，必须是 4~12 位数字',
   'invalid-password': '密码格式不对：至少 6 位、至多 128 位',
   'invalid-argument': '请求参数不合法，请检查表单',
+  // 房间 Git 工作区同步（契约 §4.3）：这三个 code 由服务端给出，文案属于展示层。
+  'invalid-repo': '仓库地址不合法，必须是 http:// 或 https://',
+  'invalid-workspace': '工作区目录不合法，请确认路径存在且是目录',
+  'sync-failed': '同步失败，请检查仓库地址、分支与访问令牌',
   'wrong-password': '密码错误',
   'invalid-ticket': '进房凭据已失效，请重新进房',
   'invalid-device': '设备身份未登记，请刷新页面重新连接',
@@ -128,6 +140,9 @@ const sectionStyle: React.CSSProperties = {
 
 const sectionTitleStyle: React.CSSProperties = { margin: '0 0 8px', fontSize: '14px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }
 
+/** 表单字段标签：与建房表单里内联的 label 样式保持一致，抽出来给仓库表单复用。 */
+const fieldLabelStyle: React.CSSProperties = { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }
+
 /**
  * 房间面板：建房、进房、房间列表、成员与房主操作。
  *
@@ -143,6 +158,13 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
   const [createMaxMembers, setCreateMaxMembers] = useState('16')
   const [createDiscoverable, setCreateDiscoverable] = useState(true)
 
+  // 建房表单的 Git 仓库折叠区（§5.2）：远端为空即「不配置」，令牌提交后立刻从组件状态清掉。
+  const [showGitSection, setShowGitSection] = useState(false)
+  const [repoUrl, setRepoUrl] = useState('')
+  const [repoBranch, setRepoBranch] = useState('main')
+  const [repoToken, setRepoToken] = useState('')
+  const [repoAutoPush, setRepoAutoPush] = useState(true)
+
   // 进房表单
   const [joinRoomId, setJoinRoomId] = useState('')
   const [joinPassword, setJoinPassword] = useState('')
@@ -152,6 +174,12 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
   const [joinedRooms, setJoinedRooms] = useState<JoinedView[]>([])
   const [membersByRoom, setMembersByRoom] = useState<Record<string, RoomMember[]>>({})
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
+
+  // 仓库与工作区（§5.2）：状态按房间存本地视图，推送与请求结果都写回这里。
+  const [gitStatusByRoom, setGitStatusByRoom] = useState<Record<string, RoomRepoStatus>>({})
+  const [workspacePath, setWorkspacePath] = useState('')
+  const [workspaceCandidates, setWorkspaceCandidates] = useState<string[]>([])
+  const [editingRepo, setEditingRepo] = useState(false)
 
   // 房主操作
   const [newPassword, setNewPassword] = useState('')
@@ -168,6 +196,8 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
   const selectedRoom = joinedRooms.find(room => room.roomId === activeRoomId)
   const selectedRoomInfo = listedRooms.find(room => room.roomId === activeRoomId)
   const selectedMembers = activeRoomId ? membersByRoom[activeRoomId] ?? [] : []
+  // 当前房间的仓库状态；还没拉到时是 undefined，UI 用「正在读取」占位。
+  const activeGitStatus = activeRoomId ? gitStatusByRoom[activeRoomId] : undefined
   // 房主身份取「列表投影」与「已加入房间」两处之一：列表不一定可见（不可发现的房间）。
   const isOwner = isOwnerOf(selectedRoomInfo, client.getDeviceId()) || selectedRoom?.role === 'owner'
   const errorList = Object.entries(errors)
@@ -204,6 +234,26 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
       setMembersByRoom(prev => ({ ...prev, [roomId]: members }))
     } catch (error) {
       setError('members', formatRoomError(error))
+    }
+  }, [client])
+
+  /** 拉一次仓库状态（§5.2：进入房间时调一次；之后由推送维护）。 */
+  const refreshGitStatus = useCallback(async (roomId: string) => {
+    try {
+      const status = await client.getRoomGitStatus(roomId)
+      setGitStatusByRoom(prev => ({ ...prev, [roomId]: status }))
+      setError('git', null)
+    } catch (error) {
+      setError('git', formatRoomError(error))
+    }
+  }, [client])
+
+  /** 候选目录来自宿主依赖，缺失时服务契约规定返回空数组；这里再兜底一次，不让 UI 报错。 */
+  const refreshCandidates = useCallback(async (roomId: string) => {
+    try {
+      setWorkspaceCandidates(await client.listWorkspaceCandidates(roomId))
+    } catch {
+      setWorkspaceCandidates([])
     }
   }, [client])
 
@@ -286,6 +336,45 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
     return () => clearTimeout(timer)
   }, [retryUntil])
 
+  // 仓库状态按房间存本地视图（§5.2）：room-git-status 是服务端按接收者逐个投影后的推送，
+  // 直接覆盖；room-git-sync 只带结果，需要按 deviceId 合并回对应的绑定行。
+  useEffect(() => {
+    const handleGitStatus = (status: RoomRepoStatus) => {
+      setGitStatusByRoom(prev => ({ ...prev, [status.roomId]: status }))
+      // 配置变化时同步表单初值，让「修改仓库」打开就是当前值（令牌不回显，始终为空）。
+      if (status.configured) {
+        setRepoUrl(status.remoteUrl ?? '')
+        setRepoBranch(status.branch ?? 'main')
+        setRepoAutoPush(status.autoPush)
+      }
+    }
+    const handleGitSync = (roomId: string, deviceId: string, result: SyncSummary) => {
+      setGitStatusByRoom(prev => {
+        const status = prev[roomId]
+        if (!status) return prev
+        // 推送里的 deviceId 可能是真值也可能是脱敏值，统一脱敏后再比对。
+        const masked = maskDeviceId(deviceId)
+        const bindings = status.bindings.map(binding =>
+          binding.deviceId === masked ? { ...binding, lastSync: result } : binding
+        )
+        return { ...prev, [roomId]: { ...status, bindings } }
+      })
+    }
+    client.on('roomGitStatus', handleGitStatus)
+    client.on('roomGitSync', handleGitSync)
+    return () => {
+      client.off('roomGitStatus', handleGitStatus)
+      client.off('roomGitSync', handleGitSync)
+    }
+  }, [client])
+
+  // 进入/切换房间时各拉一次状态与候选目录（§5.2）。
+  useEffect(() => {
+    if (!activeRoomId) return
+    void refreshGitStatus(activeRoomId)
+    void refreshCandidates(activeRoomId)
+  }, [activeRoomId, refreshGitStatus, refreshCandidates])
+
   const handleCreate = async () => {
     const roomId = createRoomId.trim()
     if (roomId && !/^\d{4,12}$/.test(roomId)) {
@@ -305,6 +394,14 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
       setError('create', '人数上限必须是正整数')
       return
     }
+    // 远端为空 = 不配置仓库：整个 repo 键都不传，服务端据此区分「不配置」与「清空」（§5.2）。
+    const trimmedRepoUrl = repoUrl.trim()
+    const repo: RoomRepoConfigInput | undefined = trimmedRepoUrl === '' ? undefined : {
+      remoteUrl: trimmedRepoUrl,
+      branch: repoBranch.trim() || undefined,
+      ...(repoToken.trim() === '' ? {} : { auth: { type: 'token' as const, token: repoToken.trim() } }),
+      autoPush: repoAutoPush
+    }
     markBusy('create', true)
     try {
       const room = await client.createRoom({
@@ -312,12 +409,15 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
         name: createName.trim() || undefined,
         password: createPassword,
         maxMembers: createMaxMembers.trim() === '' ? undefined : maxMembers,
-        discoverable: createDiscoverable
+        discoverable: createDiscoverable,
+        repo
       })
       // 建完立刻把明文从组件状态里丢掉，页面不再持有密码。
       setCreatePassword('')
       setCreateConfirm('')
       setCreateRoomId('')
+      // 令牌同样只该活到提交这一刻，建完就丢掉。
+      setRepoToken('')
       setSelectedRoomId(room.roomId)
       setError('create', null)
       setNotice('create', `房间 ${room.roomId} 已创建`)
@@ -357,7 +457,11 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
     }
   }
 
-  const runOwnerAction = async (key: string, action: () => Promise<void>, successText: string) => {
+  /**
+   * 通用的「busy + 错误 + 提示」包装。名字不带 owner：房主操作与成员操作
+   * （绑定/解绑/立即同步）都走它，它本身不做任何权限判定，权限在服务端。
+   */
+  const runAction = async (key: string, action: () => Promise<void>, successText: string) => {
     markBusy(key, true)
     try {
       await action()
@@ -383,7 +487,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
       setError('password', '两次输入的密码不一致')
       return
     }
-    await runOwnerAction(
+    await runAction(
       'password',
       () => client.changeRoomPassword(activeRoomId, newPassword),
       '密码已更新（已在房内的成员不受影响，仅影响之后的新加入者）'
@@ -391,6 +495,134 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
     setNewPassword('')
     setConfirmNewPassword('')
   }
+
+  /** 组装 RoomRepoConfigInput；远端为空返回 null（调用方据此提示，不发出半配置请求）。 */
+  const buildRepoConfig = (autoPush: boolean): RoomRepoConfigInput | null => {
+    const remoteUrl = repoUrl.trim()
+    if (remoteUrl === '') return null
+    const token = repoToken.trim()
+    return {
+      remoteUrl,
+      branch: repoBranch.trim() || undefined,
+      ...(token === '' ? {} : { auth: { type: 'token' as const, token } }),
+      autoPush
+    }
+  }
+
+  const handleSaveRepo = async () => {
+    if (!activeRoomId) return
+    const repo = buildRepoConfig(repoAutoPush)
+    if (!repo) {
+      setError('git', '请填写远端 URL')
+      return
+    }
+    await runAction('git', async () => {
+      const status = await client.setRoomGit(activeRoomId, repo)
+      setGitStatusByRoom(prev => ({ ...prev, [activeRoomId]: status }))
+      // 令牌只在内存里用过一次，保存后立刻丢掉，不留在组件状态里。
+      setRepoToken('')
+      setEditingRepo(false)
+    }, '仓库配置已保存')
+  }
+
+  const handleClearRepo = async () => {
+    if (!activeRoomId) return
+    await runAction('git', async () => {
+      const status = await client.clearRoomGit(activeRoomId)
+      setGitStatusByRoom(prev => ({ ...prev, [activeRoomId]: status }))
+      setRepoToken('')
+      setEditingRepo(false)
+    }, '仓库配置已清除')
+  }
+
+  const handleSetAutoPush = async (autoPush: boolean) => {
+    if (!activeRoomId) return
+    const repo = buildRepoConfig(autoPush)
+    if (!repo) return
+    await runAction('git', async () => {
+      const status = await client.setRoomGit(activeRoomId, repo)
+      setGitStatusByRoom(prev => ({ ...prev, [activeRoomId]: status }))
+    }, '自动推送已更新')
+  }
+
+  const handleBindWorkspace = async () => {
+    if (!activeRoomId) return
+    const path = workspacePath.trim()
+    if (path === '') {
+      setError('workspace', '请填写工作区路径')
+      return
+    }
+    await runAction('workspace', async () => {
+      const status = await client.bindRoomWorkspace(activeRoomId, path)
+      setGitStatusByRoom(prev => ({ ...prev, [activeRoomId]: status }))
+    }, '工作区已绑定')
+  }
+
+  const handleUnbindWorkspace = async () => {
+    if (!activeRoomId) return
+    await runAction('workspace', async () => {
+      const status = await client.unbindRoomWorkspace(activeRoomId)
+      setGitStatusByRoom(prev => ({ ...prev, [activeRoomId]: status }))
+    }, '工作区已解绑')
+  }
+
+  const handleSyncNow = async () => {
+    if (!activeRoomId) return
+    await runAction('sync', async () => {
+      const result = await client.syncRoomGit(activeRoomId)
+      // 推送也会带回同一份结果；先用返回值落一次本地视图，省掉等一帧的闪烁。
+      setGitStatusByRoom(prev => {
+        const status = prev[activeRoomId]
+        if (!status) return prev
+        const me = maskDeviceId(client.getDeviceId())
+        const bindings = status.bindings.map(binding =>
+          binding.deviceId === me ? { ...binding, lastSync: result } : binding
+        )
+        return { ...prev, [activeRoomId]: { ...status, bindings } }
+      })
+    }, '同步请求已完成')
+  }
+
+  /** 仓库配置字段（远端/分支/令牌/自动推送）：建房折叠区与房内配置表单共用一份。 */
+  const renderRepoFields = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <label style={fieldLabelStyle}>
+        远端 URL（http:// 或 https://）
+        <input
+          value={repoUrl}
+          onChange={e => setRepoUrl(e.target.value)}
+          placeholder="https://github.com/owner/repo.git"
+          style={{ ...inputStyle, width: '100%', marginTop: '4px' }}
+        />
+      </label>
+      <label style={fieldLabelStyle}>
+        分支
+        <input
+          value={repoBranch}
+          onChange={e => setRepoBranch(e.target.value)}
+          placeholder="main"
+          style={{ ...inputStyle, width: '100%', marginTop: '4px' }}
+        />
+      </label>
+      <label style={fieldLabelStyle}>
+        访问令牌
+        <input
+          type="password"
+          value={repoToken}
+          onChange={e => setRepoToken(e.target.value)}
+          placeholder="可选（HTTPS Basic）"
+          style={{ ...inputStyle, width: '100%', marginTop: '4px' }}
+        />
+      </label>
+      <label style={{ ...fieldLabelStyle, display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--dsw-alias-label-primary)' }}>
+        <input type="checkbox" checked={repoAutoPush} onChange={e => setRepoAutoPush(e.target.checked)} />
+        自动推送
+      </label>
+      <p style={{ margin: 0, fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' }}>
+        令牌只在提交时上行，不会写进房间列表或日志。
+      </p>
+    </div>
+  )
 
   return (
     <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', overflow: 'auto', background: 'var(--dsw-alias-bg-layer-1)' }}>
@@ -479,6 +711,16 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
             >
               {busy.create ? '创建中…' : '创建并进入'}
             </button>
+            {/* Git 仓库是可选的：折叠起来，避免把普通建房流程拉长（§5.2）。 */}
+            <div style={{ borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button
+                onClick={() => setShowGitSection(prev => !prev)}
+                style={{ ...buttonStyle, padding: '2px 8px', fontSize: '12px', alignSelf: 'flex-start' }}
+              >
+                {showGitSection ? '收起' : '展开'} Git 仓库（可选）
+              </button>
+              {showGitSection && renderRepoFields()}
+            </div>
           </div>
         </div>
 
@@ -628,7 +870,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                 {isOwner && member.role !== 'owner' && (
                   <button
                     onClick={() => {
-                      runOwnerAction(
+                      runAction(
                         'kick',
                         () => client.kickMember(activeRoomId, member.deviceId),
                         `已移出 ${member.deviceName}`
@@ -674,7 +916,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
             </div>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <button
-                onClick={() => void runOwnerAction(
+                onClick={() => void runAction(
                   'lock',
                   () => client.setRoomLocked(activeRoomId, !(selectedRoomInfo?.locked ?? false)),
                   (selectedRoomInfo?.locked ?? false) ? '房间已解锁' : '房间已锁定'
@@ -685,7 +927,7 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
                 {selectedRoomInfo?.locked ? '解锁房间' : '锁定房间'}
               </button>
               <button
-                onClick={() => void runOwnerAction('close', () => client.closeRoom(activeRoomId), '房间已关闭')}
+                onClick={() => void runAction('close', () => client.closeRoom(activeRoomId), '房间已关闭')}
                 disabled={busy.close}
                 style={dangerButtonStyle}
               >
@@ -695,6 +937,139 @@ export const RoomPanel: React.FC<RoomPanelProps> = ({ client }) => {
           </div>
         )}
       </div>
+
+      {/* 仓库与工作区（§5.2）：房主配仓库、成员绑本机工作区；状态由推送与请求共同刷新。 */}
+      {activeRoomId && (
+        <div style={sectionStyle}>
+          <p style={sectionTitleStyle}>仓库与工作区</p>
+          {!activeGitStatus && (
+            <p style={{ margin: 0, color: 'var(--dsw-alias-label-tertiary)', fontSize: '13px' }}>正在读取仓库状态…</p>
+          )}
+
+          {activeGitStatus && !activeGitStatus.configured && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <p style={{ margin: 0, fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' }}>
+                房主尚未设置仓库。设置后成员才能绑定本机工作区并自动同步。
+              </p>
+              {isOwner && (
+                <>
+                  {renderRepoFields()}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button onClick={() => void handleSaveRepo()} disabled={busy.git} style={primaryButtonStyle}>保存仓库</button>
+                    <button onClick={() => void handleClearRepo()} disabled={busy.git} style={buttonStyle}>清除仓库</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {activeGitStatus && activeGitStatus.configured && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', fontSize: '13px' }}>
+                <span style={{ color: 'var(--dsw-alias-label-secondary)' }}>远端</span>
+                <span style={{ wordBreak: 'break-all' }}>{activeGitStatus.remoteUrl ?? '（未知）'}</span>
+                <span style={{ color: 'var(--dsw-alias-label-secondary)' }}>分支</span>
+                <span>{activeGitStatus.branch ?? 'main'}</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }}>
+                  <input
+                    type="checkbox"
+                    checked={activeGitStatus.autoPush}
+                    disabled={!isOwner || (activeGitStatus.authConfigured && repoToken.trim() === '')}
+                    onChange={e => void handleSetAutoPush(e.target.checked)}
+                  />
+                  自动推送
+                </label>
+              </div>
+              {/* 令牌不回显，直接切换会把已保存的令牌覆盖掉；宁可禁用并说明，也不静默丢凭据。 */}
+              {isOwner && activeGitStatus.authConfigured && repoToken.trim() === '' && (
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                  房间已配置访问令牌（不回显）。切换自动推送会覆盖仓库配置，请先用「修改仓库」重新填写令牌。
+                </p>
+              )}
+
+              {isOwner && !editingRepo && (
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => {
+                      setRepoUrl(activeGitStatus.remoteUrl ?? '')
+                      setRepoBranch(activeGitStatus.branch ?? 'main')
+                      setRepoAutoPush(activeGitStatus.autoPush)
+                      setEditingRepo(true)
+                    }}
+                    style={buttonStyle}
+                  >
+                    修改仓库
+                  </button>
+                  <button onClick={() => void handleClearRepo()} disabled={busy.git} style={dangerButtonStyle}>清除仓库</button>
+                </div>
+              )}
+              {isOwner && editingRepo && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '8px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '6px' }}>
+                  {renderRepoFields()}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button onClick={() => void handleSaveRepo()} disabled={busy.git} style={primaryButtonStyle}>保存仓库</button>
+                    <button onClick={() => setEditingRepo(false)} style={buttonStyle}>取消</button>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <p style={{ margin: 0, fontSize: '13px', fontWeight: 600 }}>我的工作区</p>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <label style={{ ...fieldLabelStyle, flex: '1 1 240px' }}>
+                    工作区路径
+                    <input
+                      value={workspacePath}
+                      onChange={e => setWorkspacePath(e.target.value)}
+                      list="workspace-candidates"
+                      placeholder="本机目录绝对路径"
+                      style={{ ...inputStyle, width: '100%', marginTop: '4px' }}
+                    />
+                  </label>
+                  <datalist id="workspace-candidates">
+                    {workspaceCandidates.map(path => <option key={path} value={path} />)}
+                  </datalist>
+                  <button onClick={() => void handleBindWorkspace()} disabled={busy.workspace} style={primaryButtonStyle}>绑定</button>
+                  <button onClick={() => void handleUnbindWorkspace()} disabled={busy.workspace} style={buttonStyle}>解绑</button>
+                  <button onClick={() => void handleSyncNow()} disabled={busy.sync} style={buttonStyle}>立即同步</button>
+                </div>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: '8px' }}>
+                <p style={{ margin: '0 0 6px', fontSize: '13px', fontWeight: 600 }}>成员工作区状态</p>
+                {activeGitStatus.bindings.length === 0 ? (
+                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--dsw-alias-label-tertiary)' }}>还没有成员绑定工作区</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {activeGitStatus.bindings.map(binding => (
+                      <div key={binding.deviceId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '4px 0', fontSize: '13px' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: binding.bound ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-label-caption)', flexShrink: 0 }} />
+                          <span>{binding.deviceName}</span>
+                          <span style={{ fontSize: '12px', color: binding.bound ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-label-tertiary)' }}>
+                            {binding.bound ? '已绑定' : '未绑定'}
+                          </span>
+                          {binding.workspacePath && (
+                            <span style={{ fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)', wordBreak: 'break-all' }}>{binding.workspacePath}</span>
+                          )}
+                        </span>
+                        <span style={{ fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', textAlign: 'right' }}>
+                          {binding.lastSync
+                            ? `${formatTime(binding.lastSync.at)} · ${binding.lastSync.ok ? (binding.lastSync.pushed ? '已推送' : '已提交未推送') : '同步失败'} · ${binding.lastSync.committed} 个文件`
+                            : '尚未同步'}
+                          {binding.lastSync?.error && (
+                            <span style={{ color: 'var(--dsw-alias-state-error-primary)', marginLeft: '6px' }}>{binding.lastSync.error}</span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 预览：让 UI 也能看到房内的历史消息（当前房间） */}
       {activeRoomId && (

@@ -53,6 +53,12 @@ export interface RoomInfo {
   maxMembers: number
   locked: boolean
   discoverable: boolean
+  /**
+   * 房间是否已配置 Git 仓库（契约 §3）。
+   * 公开投影只暴露这个布尔值，绝不暴露 URL、分支或凭据——仓库细节只经
+   * RoomRepoStatus（脱敏后）流转，避免从房间列表/详情里泄漏远端地址。
+   */
+  repoConfigured: boolean
 }
 
 /** 成员视图。deviceId 同样脱敏；sessionIds 集合永不外泄，只暴露计数与在线位。 */
@@ -107,12 +113,17 @@ export type RoomErrorCode =
   | 'too-many-rooms' | 'room-code-exhausted'
   // 参数与凭据
   | 'invalid-room-id' | 'invalid-password' | 'invalid-argument' | 'wrong-password' | 'invalid-ticket'
+  // 房间 Git 工作区同步（契约 §4.3）：远端 URL / 分支非法、房主未配仓库、工作区路径非法
+  | 'invalid-repo' | 'invalid-workspace'
   // 身份与授权
   | 'invalid-device'      // deviceSecret 缺失/未登记（客户端凭据问题）
   | 'too-many-attempts'   // 试错锁定，必带 retryAfterMs
   | 'not-a-member'        // 不是该房间成员，或该会话未挂在该成员上
   | 'forbidden'           // 是成员但非房主 / 房主踢自己 / 房间列表关闭
   // 传输层
+  // 同步动作本身在服务层不抛（结果对象带 ok=false，契约 §4.3），该码保留给
+  // sync() 自身抛异常（例如绑定已不存在）时由 REST/WS 层使用。
+  | 'sync-failed'
   | 'room-gate-unavailable' | 'internal-error'
 
 export class RoomError extends Error {
@@ -500,7 +511,9 @@ export class RoomService extends Service {
         locked: false,
         discoverable: request?.discoverable !== undefined
           ? Boolean(request.discoverable)
-          : this.config.discoverableByDefault
+          : this.config.discoverableByDefault,
+        // 建房默认未配置仓库；房主随后经 setRepoConfigured 置位（契约 §3）。
+        repoConfigured: false
       },
       realOwnerDeviceId: deviceId,
       passwordHash: null,
@@ -810,6 +823,19 @@ export class RoomService extends Service {
       throw new RoomError('not-a-member', 'Not a member of this room')
     }
     return Array.from(record.members.values()).map(member => this.projectMember(record, member))
+  }
+
+  /**
+   * 标记房间是否已配置 Git 仓库（契约 §3）。
+   *
+   * 由 RoomWorkspaceService 在房主配置/清除仓库后调用。这里只翻一个布尔位：
+   * 不更新 lastActivityAt（它不是成员活动，不该让房间免于空闲回收），
+   * 也不发房间事件——状态广播归 RoomWorkspaceService 的 'status-changed'，
+   * 两处各发一次会让客户端刷新两遍。
+   */
+  setRepoConfigured(roomId: RoomId, value: boolean): void {
+    const record = this.requireVisibleRoom(roomId)
+    record.info.repoConfigured = Boolean(value)
   }
 
   /** 含建房占位（见并发与原子性约定） */
@@ -1251,7 +1277,9 @@ export class RoomService extends Service {
       memberCount: record.members.size,
       maxMembers: record.info.maxMembers,
       locked: record.info.locked,
-      discoverable: record.info.discoverable
+      discoverable: record.info.discoverable,
+      // 只投影布尔值，不含 URL/分支/凭据（契约 §3）。
+      repoConfigured: record.info.repoConfigured
     }
   }
 

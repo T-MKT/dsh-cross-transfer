@@ -26,3 +26,11 @@
           closeWhenOwnerLeaves: true     # 房主退房即关房；false 则自动移交房主
           discoverableByDefault: true    # 建房默认出现在房间列表
           allowRoomList: true            # false 时 REST /rooms 与 WS room-list 一律 403
+        # 房间 Git 工作区同步配置：整块可省略（缺省取下列默认值），也可只写需要覆盖的字段。
+        # enabled: false 时配置/清空/绑定/解绑/同步一律 403 forbidden（读取不受影响）。
+        roomGit:
+          enabled: true                  # 总开关
+          debounceMs: 1500               # 自动同步的合并窗口（毫秒）
+          pushTimeoutMs: 60000           # 单次提交+推送的超时（毫秒）
+          maxBindingsPerRoom: 16         # 每房间最多保留的绑定数（同设备重复绑定算更新）
+          maxCandidates: 50              # 候选工作区目录的返回上限

@@ -1204,3 +1204,345 @@ describe('CrossTransferClient', () => {
     })
   })
 })
+
+/**
+ * 客户端「房间 Git 工作区」协议面单测（契约 §5.1 方法面 / §6.3）。
+ *
+ * 范围：只测浏览器半的协议面——7 个新方法的请求帧形状、messageId 应答配对、
+ * 推送形态（无 messageId）的事件派发、CreateRoomOptions.repo 透传，以及三个新
+ * 错误码到 RoomRequestError 的映射。权限判定、git 落盘与推送属于宿主半，在
+ * room-workspace 的用例里覆盖，这里不重复。
+ *
+ * 不连真实 WS：沿用本文件「房间 API 的消息体」里的 captureSends() 手法，用
+ * replyTypeFor/replyPayloadFor 造出与真实服务端一致的应答帧。
+ * 注意 replyTypeFor 对 room-git-config/clear/status/bind/unbind 走 default 分支
+ * （应答与请求同名），而 §4.5 规定真实服务端这几条的应答 type 是 room-git-status；
+ * 客户端配对只认 messageId，两种形状都必须兑现请求——两种形状各有用例覆盖。
+ *
+ * 跑法：node node_modules/vitest/vitest.mjs --run test/client.test.ts
+ */
+describe('房间 Git 工作区客户端（§5.1 / §6.3）', () => {
+  /** 同「房间 API 的消息体」的 helper；reply 可换掉应答 payload（默认走 replyPayloadFor）。 */
+  function captureSends(
+    client: CrossTransferClient,
+    reply?: (message: Record<string, any>) => unknown,
+  ): Array<Record<string, any>> {
+    const sent: Array<Record<string, any>> = []
+    vi.spyOn(client as any, 'send').mockImplementation((message: Record<string, any>) => {
+      sent.push(message)
+      queueMicrotask(() => {
+        ;(client as any).handleMessage({
+          type: (client as any).replyTypeFor(message.type),
+          messageId: message.messageId,
+          payload: reply ? reply(message) : (client as any).replyPayloadFor(message),
+        })
+      })
+      return true
+    })
+    return sent
+  }
+
+  /** 每个请求都收到带 messageId 的 error 应答，用于断言错误码映射。 */
+  function captureSendsWithError(client: CrossTransferClient, code: string, message: string): Array<Record<string, any>> {
+    const sent: Array<Record<string, any>> = []
+    vi.spyOn(client as any, 'send').mockImplementation((frame: Record<string, any>) => {
+      sent.push(frame)
+      queueMicrotask(() => {
+        ;(client as any).handleMessage({ type: 'error', messageId: frame.messageId, payload: { code, message } })
+      })
+      return true
+    })
+    return sent
+  }
+
+  function makeRepoStatus(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      roomId: '123456',
+      configured: true,
+      remoteUrl: 'https://example.com/demo.git',
+      branch: 'main',
+      authConfigured: true,
+      autoCommit: true,
+      autoPush: true,
+      bindings: [],
+      ...overrides,
+    }
+  }
+
+  function makeSyncSummary(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return { at: 1700000000000, ok: true, trigger: 'manual', committed: 2, commitOid: 'oid-1', pushed: true, ...overrides }
+  }
+
+  const repoInput = {
+    remoteUrl: 'https://example.com/demo.git',
+    branch: 'main',
+    auth: { type: 'token' as const, token: 'ghp-secret-token' },
+    autoPush: false,
+  }
+
+  // ---------- 请求帧形状与应答配对 ----------
+
+  it('setRoomGit() 发送 room-git-config，payload 原样带 repo', async () => {
+    const client = createClient()
+    const sent = captureSends(client)
+
+    const status = await client.setRoomGit('123456', repoInput)
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0].type).toBe('room-git-config')
+    expect(sent[0].messageId).toMatch(/^req_/)
+    expect(sent[0].payload).toEqual({ roomId: '123456', repo: repoInput })
+    // 应答按 messageId 配对兑现，返回值就是应答 payload 本身。
+    expect(status.configured).toBe(true)
+    expect(status.remoteUrl).toBe('https://example.com/demo.git')
+    expect(status.branch).toBe('main')
+    expect(status.authConfigured).toBe(true)
+    expect(status.autoPush).toBe(false)
+    expect(status.bindings).toEqual([])
+    expect((client as any).pendingRequests.size).toBe(0)
+  })
+
+  it('clearRoomGit() / getRoomGitStatus() / unbindRoomWorkspace() 只带 roomId', async () => {
+    const client = createClient()
+    const sent = captureSends(client)
+
+    const cleared = await client.clearRoomGit('123456')
+    expect(sent[0].type).toBe('room-git-clear')
+    expect(sent[0].payload).toEqual({ roomId: '123456' })
+    expect(cleared.configured).toBe(false)
+    // §3：未配置时投影省略 remoteUrl，客户端不该凭空看到旧地址。
+    expect(cleared).not.toHaveProperty('remoteUrl')
+
+    const status = await client.getRoomGitStatus('123456')
+    expect(sent[1].type).toBe('room-git-status')
+    expect(sent[1].payload).toEqual({ roomId: '123456' })
+    expect(status.configured).toBe(true)
+
+    const unbound = await client.unbindRoomWorkspace('123456')
+    expect(sent[2].type).toBe('room-workspace-unbind')
+    expect(sent[2].payload).toEqual({ roomId: '123456' })
+    expect(unbound.roomId).toBe('123456')
+
+    expect((client as any).pendingRequests.size).toBe(0)
+  })
+
+  it('bindRoomWorkspace() 发送 room-workspace-bind，payload 带 path', async () => {
+    const client = createClient()
+    const sent = captureSends(client)
+
+    const status = await client.bindRoomWorkspace('123456', 'D:\\work\\demo')
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0].type).toBe('room-workspace-bind')
+    expect(sent[0].payload).toEqual({ roomId: '123456', path: 'D:\\work\\demo' })
+    expect(status.roomId).toBe('123456')
+  })
+
+  it('真实服务端的 room-git-status 应答型也能兑现绑定请求，且不重复派发事件', async () => {
+    const client = createClient()
+    const sent: Array<Record<string, any>> = []
+    vi.spyOn(client as any, 'send').mockImplementation((frame: Record<string, any>) => {
+      sent.push(frame)
+      return true
+    })
+    const gitStatus = vi.fn()
+    client.on('roomGitStatus', gitStatus)
+
+    const pending = client.bindRoomWorkspace('123456', 'D:\\work\\demo')
+    const messageId = sent[0].messageId
+    // §4.5：这几条请求的应答 type 与请求不同名，配对只认 messageId。
+    ;(client as any).handleMessage({ type: 'room-git-status', messageId, payload: makeRepoStatus() })
+
+    const status = await pending
+    expect(status.remoteUrl).toBe('https://example.com/demo.git')
+    // 应答帧已在 ROOM_REPLY_TYPES 里被吞掉，否则 UI 会收到一份重复状态。
+    expect(gitStatus).not.toHaveBeenCalled()
+    expect((client as any).pendingRequests.size).toBe(0)
+  })
+
+  it('带未知 messageId 的 room-git-status 不当应答，按推送派发', async () => {
+    const client = createClient()
+    const sent: Array<Record<string, any>> = []
+    vi.spyOn(client as any, 'send').mockImplementation((frame: Record<string, any>) => {
+      sent.push(frame)
+      return true
+    })
+    const gitStatus = vi.fn()
+    client.on('roomGitStatus', gitStatus)
+
+    const pending = client.getRoomGitStatus('123456')
+    const messageId = sent[0].messageId
+
+    // 别人的应答（messageId 对不上）落到推送分支，本请求仍在等待。
+    ;(client as any).handleMessage({
+      type: 'room-git-status',
+      messageId: 'req_someone-else',
+      payload: makeRepoStatus({ roomId: '654321' }),
+    })
+    expect(gitStatus).toHaveBeenCalledTimes(1)
+    expect((client as any).pendingRequests.has(messageId)).toBe(true)
+
+    ;(client as any).handleMessage({ type: 'room-git-status', messageId, payload: makeRepoStatus() })
+    const status = await pending
+    expect(status.roomId).toBe('123456')
+    expect(gitStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('listWorkspaceCandidates() 解析应答里的 paths', async () => {
+    const client = createClient()
+    const sent = captureSends(client, () => ({ roomId: '123456', paths: ['D:\\work\\a', 'D:\\work\\b'] }))
+
+    const paths = await client.listWorkspaceCandidates('123456')
+
+    expect(sent[0].type).toBe('room-workspace-candidates')
+    expect(sent[0].payload).toEqual({ roomId: '123456' })
+    expect(paths).toEqual(['D:\\work\\a', 'D:\\work\\b'])
+  })
+
+  it('listWorkspaceCandidates() 在应答缺 paths 时返回空数组（不抛）', async () => {
+    const client = createClient()
+    captureSends(client, () => ({ roomId: '123456' }))
+
+    await expect(client.listWorkspaceCandidates('123456')).resolves.toEqual([])
+  })
+
+  it('syncRoomGit() 发送 room-git-sync，应答 type 为 room-git-sync-result 且只取 result', async () => {
+    const client = createClient()
+    const sent = captureSends(client)
+    const gitSync = vi.fn()
+    client.on('roomGitSync', gitSync)
+
+    const result = await client.syncRoomGit('123456')
+
+    expect(sent[0].type).toBe('room-git-sync')
+    expect(sent[0].payload).toEqual({ roomId: '123456' })
+    expect((client as any).replyTypeFor('room-git-sync')).toBe('room-git-sync-result')
+    expect(result).toEqual({ at: 1699999999000, ok: true, trigger: 'manual', committed: 0, pushed: true })
+    // 应答帧不派发 roomGitSync：那是无 messageId 的推送形态的职责。
+    expect(gitSync).not.toHaveBeenCalled()
+  })
+
+  it('syncRoomGit() 用 65s 超时等推送（服务端 pushTimeoutMs 默认 60s）', async () => {
+    const client = createClient()
+    const requestSpy = vi
+      .spyOn(client as any, 'request')
+      .mockResolvedValue({ roomId: '123456', result: makeSyncSummary() })
+
+    const result = await client.syncRoomGit('123456')
+
+    // roomRequest 只把 message 与 timeoutMs 透给 request（房号在 payload 里）。
+    expect(requestSpy).toHaveBeenCalledWith({ type: 'room-git-sync', payload: { roomId: '123456' } }, 65000)
+    expect(result).toEqual(makeSyncSummary())
+    requestSpy.mockRestore()
+  })
+
+  // ---------- 推送形态的事件派发 ----------
+
+  it('无 messageId 的 room-git-status 推送派发 roomGitStatus 事件', () => {
+    const client = createClient()
+    const listener = vi.fn()
+    client.on('roomGitStatus', listener)
+
+    const status = makeRepoStatus({ updatedByDeviceId: 'aaaa…bbbb' })
+    ;(client as any).handleMessage({ type: 'room-git-status', payload: status })
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledWith(status)
+    // 推送不是任何请求的应答，不该留下 pending 记录。
+    expect((client as any).pendingRequests.size).toBe(0)
+  })
+
+  it('无 messageId 的 room-git-sync-result 推送派发 roomGitSync 并展开三个参数', () => {
+    const client = createClient()
+    const listener = vi.fn()
+    client.on('roomGitSync', listener)
+
+    const payload = {
+      roomId: '123456',
+      deviceId: 'dev-1',
+      result: makeSyncSummary({ ok: false, pushed: false, error: 'remote unreachable' }),
+    }
+    ;(client as any).handleMessage({ type: 'room-git-sync-result', payload })
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledWith('123456', 'dev-1', payload.result)
+  })
+
+  // ---------- 建房时的 repo 透传 ----------
+
+  it('createRoom() 把 repo 透传到 room-create 的 payload', async () => {
+    const client = createClient()
+    const sent = captureSends(client)
+
+    await client.createRoom({ roomId: '123456', name: 'Demo', password: 'secret-1', repo: repoInput })
+
+    expect(sent[0].type).toBe('room-create')
+    expect(sent[0].payload.repo).toEqual(repoInput)
+  })
+
+  it('createRoom() 不传 repo 时 payload 不含 repo 键（服务端靠键是否存在区分「不配置」）', async () => {
+    const client = createClient()
+    const sent = captureSends(client)
+
+    await client.createRoom({ roomId: '123456', name: 'Demo', password: 'secret-1' })
+
+    expect(sent[0].type).toBe('room-create')
+    expect(sent[0].payload).not.toHaveProperty('repo')
+  })
+
+  // ---------- 新错误码（§4.3） ----------
+
+  it('invalid-repo 映射成带 code 的 RoomRequestError（应答型错误不重复上报全局 error）', async () => {
+    const client = createClient()
+    const globalErrors = vi.fn()
+    client.on('error', globalErrors)
+    captureSendsWithError(client, 'invalid-repo', '远端只支持 http(s)')
+
+    const error = await client.setRoomGit('123456', repoInput).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(RoomRequestError)
+    expect((error as RoomRequestError).code).toBe('invalid-repo')
+    expect((error as RoomRequestError).message).toBe('远端只支持 http(s)')
+    expect(globalErrors).not.toHaveBeenCalled()
+    expect((client as any).pendingRequests.size).toBe(0)
+  })
+
+  it('invalid-workspace 映射成带 code 的 RoomRequestError', async () => {
+    const client = createClient()
+    const globalErrors = vi.fn()
+    client.on('error', globalErrors)
+    captureSendsWithError(client, 'invalid-workspace', '工作区无法初始化为 Git 仓库')
+
+    const error = await client.bindRoomWorkspace('123456', 'relative/path').catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(RoomRequestError)
+    expect((error as RoomRequestError).code).toBe('invalid-workspace')
+    expect((error as RoomRequestError).message).toBe('工作区无法初始化为 Git 仓库')
+    expect(globalErrors).not.toHaveBeenCalled()
+  })
+
+  it('sync-failed 映射成带 code 的 RoomRequestError', async () => {
+    const client = createClient()
+    const globalErrors = vi.fn()
+    client.on('error', globalErrors)
+    captureSendsWithError(client, 'sync-failed', '绑定已不存在')
+
+    const error = await client.syncRoomGit('123456').catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(RoomRequestError)
+    expect((error as RoomRequestError).code).toBe('sync-failed')
+    expect((error as RoomRequestError).message).toBe('绑定已不存在')
+    expect(globalErrors).not.toHaveBeenCalled()
+    expect((client as any).pendingRequests.size).toBe(0)
+  })
+
+  it('房主操作被拒时 forbidden 也走同一映射', async () => {
+    const client = createClient()
+    captureSendsWithError(client, 'forbidden', '只有房主可以设置仓库')
+
+    const error = await client.setRoomGit('123456', repoInput).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(RoomRequestError)
+    expect((error as RoomRequestError).code).toBe('forbidden')
+  })
+})

@@ -17,6 +17,8 @@ import z from '@deepseek-ai/schemastery'
 import { FileTransferService } from './file-transfer.js'
 import { ChatService } from './chat.js'
 import { GitSyncService } from './git-sync.js'
+import { RoomWorkspaceService } from './room-workspace.js'
+import type { RoomGitConfig, RoomRepoConfigInput } from './room-workspace.js'
 import { RoomService, RoomError, isRoomError, deriveDeviceId, deriveDeviceToken, maskDeviceId, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH } from './rooms.js'
 import { WSServer } from './ws-server.js'
 import type { ChatMessage } from './chat.js'
@@ -38,6 +40,12 @@ export interface CrossTransferConfig {
   chunkSize: number
   /** 房间能力配置；schema 给每一项都配了默认值，旧配置不带 rooms 也能启动。 */
   rooms: RoomConfig
+  /**
+   * 房间 Git 工作区同步配置（契约 §4.6）；整块可选，旧配置不带 roomGit 也能启动。
+   * 形状必须是 RoomGitConfig 而不是 Partial：schema 已经把每一项都补成默认值了，
+   * 缺省值的唯一来源是 Config 的 z.object，避免两处默认值漂移。
+   */
+  roomGit?: RoomGitConfig
 }
 
 export interface DeviceInfo {
@@ -77,6 +85,15 @@ export const Config = z.object({
     closeWhenOwnerLeaves: z.boolean().default(true),
     discoverableByDefault: z.boolean().default(true),
     allowRoomList: z.boolean().default(true)
+  }).default({}),
+  // 契约 §4.6：整块 .default({})，五项各自带默认值。
+  // 注意默认值必须与 src/room-workspace.ts 的 DEFAULT_ROOM_GIT_CONFIG 逐项一致。
+  roomGit: z.object({
+    enabled: z.boolean().default(true),
+    debounceMs: z.natural().default(1500),
+    pushTimeoutMs: z.natural().default(60000),
+    maxBindingsPerRoom: z.natural().default(16),
+    maxCandidates: z.natural().default(50)
   }).default({})
 })
 
@@ -125,11 +142,13 @@ const ROOM_ID_PATTERN = new RegExp(`^[0-9]{${ROOM_ID_MIN_LENGTH},${ROOM_ID_MAX_L
 /** 路径在房间路由表内而方法不在表内时的统一 405 错误体（§3.2）。 */
 const METHOD_NOT_ALLOWED = { error: { code: 'invalid-argument', message: 'Method not allowed' } }
 
-/** RoomErrorCode → HTTP 状态码（§3.3）。表外一律 500。 */
+/** RoomErrorCode → HTTP 状态码（§3.3，房间 Git 三项见契约 §4.3）。表外一律 500。 */
 const ROOM_ERROR_STATUS: Record<string, number> = {
   'invalid-room-id': 400,
   'invalid-password': 400,
   'invalid-argument': 400,
+  'invalid-repo': 400,
+  'invalid-workspace': 400,
   'wrong-password': 401,
   'invalid-ticket': 401,
   'invalid-device': 401,
@@ -142,6 +161,9 @@ const ROOM_ERROR_STATUS: Record<string, number> = {
   'room-locked': 423,
   'too-many-attempts': 429,
   'too-many-rooms': 429,
+  // sync-failed 是「同步动作本身抛异常」的兜底码（服务层正常失败只回 ok=false，
+  // 契约 §4.3），语义上是「远端不可达」，所以是 502 而不是 500。
+  'sync-failed': 502,
   'room-code-exhausted': 503,
   'room-gate-unavailable': 503,
   'internal-error': 500
@@ -171,6 +193,17 @@ function respondRoomError(res: ServerResponse, error: unknown): void {
 }
 
 /**
+ * 消息/请求体里的可选 repo 字段（契约 §4.5）。
+ *
+ * 只判断「有没有给」：形状与取值一律交给 RoomWorkspaceService 校验（§4.2 规则 2），
+ * 门禁不实现第二套规则，否则两处规则必然漂移。null 与 undefined 同义（没给）。
+ */
+function optionalRepoConfig(value: unknown): RoomRepoConfigInput | undefined {
+  if (value === undefined || value === null) return undefined
+  return value as RoomRepoConfigInput
+}
+
+/**
  * 房间 WS 面的门禁：所有 room-* 与房间语义消息（chat-message / typing 等）都由它裁决。
  *
  * 它按契约本该落在独立的 src/room-gateway.ts；本单元只允许改三个文件，
@@ -182,17 +215,24 @@ export class RoomGateway implements RoomGate {
   private readonly rooms: RoomService
   private readonly chat: ChatService
   private readonly server: WSServer
+  /**
+   * 房间 Git 工作区服务（契约 §4.6）。可选：旧调用方（test/ws-server.test.ts 的
+   * createRoomHarness）只传 4 个参数，此时所有 Git 相关桥接与 handler 一律退化，
+   * 插件其余功能必须照常可用。
+   */
+  private readonly roomWorkspace?: RoomWorkspaceService
   private readonly offEvents: Array<() => void> = []
   /** 已证明持有 deviceSecret 的设备（真 id）。建房/进房快速通道的前置条件。 */
   private readonly provenDevices = new Set<string>()
   /** 脱敏 id → 真 id。member-joined 事件只带脱敏 id，user-joined 推送需要真 id。 */
   private readonly maskedIndex = new Map<string, string>()
 
-  constructor(ctx: Context, rooms: RoomService, chat: ChatService, server: WSServer) {
+  constructor(ctx: Context, rooms: RoomService, chat: ChatService, server: WSServer, roomWorkspace?: RoomWorkspaceService) {
     this.ctx = ctx
     this.rooms = rooms
     this.chat = chat
     this.server = server
+    this.roomWorkspace = roomWorkspace
     this.subscribe()
   }
 
@@ -222,6 +262,20 @@ export class RoomGateway implements RoomGate {
         return this.handleRoomList()
       case 'room-members':
         return this.handleRoomMembers(session, this.assertObject(message.payload))
+      case 'room-git-config':
+        return this.handleRoomGitConfig(session, this.assertObject(message.payload))
+      case 'room-git-clear':
+        return this.handleRoomGitClear(session, this.assertObject(message.payload))
+      case 'room-git-status':
+        return this.handleRoomGitStatus(session, this.assertObject(message.payload))
+      case 'room-workspace-bind':
+        return this.handleWorkspaceBind(session, this.assertObject(message.payload))
+      case 'room-workspace-unbind':
+        return this.handleWorkspaceUnbind(session, this.assertObject(message.payload))
+      case 'room-workspace-candidates':
+        return this.handleWorkspaceCandidates(session, this.assertObject(message.payload))
+      case 'room-git-sync':
+        return this.handleRoomGitSync(session, this.assertObject(message.payload))
       case 'chat-message':
         return this.handleChatMessage(session, this.assertObject(message.payload))
       case 'chat-history-request':
@@ -264,6 +318,9 @@ export class RoomGateway implements RoomGate {
           deviceId: 'server',
           payload: { roomId, reason }
         })
+        // 契约 §4.2 规则 6：关房必须清掉该房的仓库配置、全部绑定与去抖定时器。
+        // 不清的话内存里的明文 token 会一直留到进程退出。
+        this.roomWorkspace?.onRoomClosed(roomId)
         // ChatService 没有 dropRoom：关闭房间的聊天历史只能留到进程结束，见 openQuestions。
       }),
       this.rooms.on('member-joined', (roomId, member, memberSessionIds) => {
@@ -324,6 +381,35 @@ export class RoomGateway implements RoomGate {
         )
       })
     )
+
+    // 房间 Git 工作区同步的事件桥接（契约 §4.5）。服务未接线时整段跳过：
+    // 既不能报错，也不能让这些事件落进默认的 broadcast 分支。
+    if (this.roomWorkspace) {
+      const workspace = this.roomWorkspace
+      this.offEvents.push(
+        workspace.on('status-changed', (roomId) => {
+          // 必须按接收者逐个投影（契约 §4.5）：工作区路径只对绑定者本人与房主可见，
+          // 同一份 payload 直接广播会把别人的宿主目录发给全房间。
+          for (const sessionId of this.rooms.getMemberSessionIds(roomId)) {
+            const session = this.server.getSession(sessionId)
+            if (!session) continue
+            this.server.sendToSession(sessionId, {
+              type: 'room-git-status',
+              deviceId: 'server',
+              payload: workspace.status(roomId, session.deviceId)
+            })
+          }
+        }),
+        workspace.on('sync-finished', (roomId, deviceId, result) => {
+          // 同步结果不含任何路径，全房间一份 payload 即可。
+          this.server.broadcastToSessions(this.rooms.getMemberSessionIds(roomId), {
+            type: 'room-git-sync-result',
+            deviceId: 'server',
+            payload: { roomId, deviceId, result }
+          })
+        })
+      )
+    }
     this.ctx.logger.info('[cross-transfer] Room gateway subscribed to room events')
   }
 
@@ -369,6 +455,19 @@ export class RoomGateway implements RoomGate {
     }
   }
 
+  /**
+   * 取房间 Git 工作区服务（契约 §4.6）。
+   *
+   * 未接线时（旧调用方只传 4 个构造参数）明确回 room-gate-unavailable，而不是让
+   * undefined 上调方法抛 TypeError —— 那会变成 internal-error，掩盖真正的原因。
+   */
+  private requireRoomWorkspace(): RoomWorkspaceService {
+    if (!this.roomWorkspace) {
+      throw new RoomError('room-gate-unavailable', 'Room workspace service is not available')
+    }
+    return this.roomWorkspace
+  }
+
   // --- room lifecycle handlers ---
 
   private async handleRoomCreate(session: WSSession, payload: Record<string, unknown>): Promise<RoomGateReply> {
@@ -376,6 +475,9 @@ export class RoomGateway implements RoomGate {
     if (typeof payload.password !== 'string') {
       throw new RoomError('invalid-password', 'Password is required')
     }
+    // 建房前先做纯校验（契约 §4.5）：校验不过直接回错误，绝不能建出一个半配置的房间。
+    const repo = optionalRepoConfig(payload.repo)
+    if (repo) this.requireRoomWorkspace().validateRepoConfig(repo)
     const result = await this.rooms.createRoom({
       // 字段的形状与取值范围由 RoomService 校验并归一，这里只透传，避免两处规则漂移。
       roomId: typeof payload.roomId === 'string' ? payload.roomId : undefined,
@@ -388,6 +490,14 @@ export class RoomGateway implements RoomGate {
       sessionId: session.sessionId,
       remoteAddress: session.remoteAddress
     })
+    if (repo) {
+      // 房间已经建好，配置失败不回滚房间：如实把错误回给房主，房间仍可使用。
+      const roomId = result.room.roomId
+      await this.requireRoomWorkspace().configureRepo(roomId, session.deviceId, repo)
+      // 只重新投影 RoomInfo（repoConfigured 在建房那一刻之后才被置位，§3），
+      // 应答的三件套形状（room/member/ticket）保持不变，客户端契约不能破。
+      return { type: 'room-created', payload: { ...result, room: this.rooms.getRoomInfo(roomId, session.deviceId) } }
+    }
     return { type: 'room-created', payload: result }
   }
 
@@ -412,6 +522,11 @@ export class RoomGateway implements RoomGate {
     const roomId = this.assertRoomId(payload.roomId)
     this.requireSessionMember(roomId, session)
     const result = await this.rooms.leaveRoom(roomId, session.deviceId)
+    // 契约 §4.5：退房后这个设备的绑定必须清掉，否则它还会按回合结束往房间仓库提交。
+    // 异常吞掉：清绑定失败不该让退房本身失败（设备已经不在房间里了）。
+    if (this.roomWorkspace) {
+      void this.roomWorkspace.unbindWorkspace(roomId, session.deviceId).catch(() => {})
+    }
     // leaveRoom 是设备级退房：发起会话拿应答帧，同设备的其它会话由这里补发一帧，
     // 否则残留标签页会停在一个已不属于它的房间里。
     for (const other of this.server.getDeviceSessions(session.deviceId)) {
@@ -440,6 +555,10 @@ export class RoomGateway implements RoomGate {
       throw new RoomError('invalid-argument', 'deviceId is required')
     }
     await this.rooms.kickMember(roomId, session.deviceId, payload.deviceId)
+    // 契约 §4.5：被踢设备的绑定同样要清掉；异常吞掉，踢人结果已经落定。
+    if (this.roomWorkspace) {
+      void this.roomWorkspace.unbindWorkspace(roomId, payload.deviceId).catch(() => {})
+    }
     return {
       type: 'room-member-kicked',
       payload: { roomId, deviceId: payload.deviceId, kickedByDeviceId: session.deviceId }
@@ -480,6 +599,74 @@ export class RoomGateway implements RoomGate {
       type: 'room-members',
       payload: { roomId, members: this.rooms.getMembers(roomId, session.deviceId) }
     }
+  }
+
+  // --- room git workspace handlers (契约 §4.5) ---
+
+  /**
+   * 七个 Git/工作区 handler 的统一形状（契约 §4.5）：
+   * assertRoomId → requireSessionMember（门禁只判「这个会话是不是本房成员」）→ 透传给
+   * 服务层做权限判定（房主操作由服务层的 isOwner 决定 forbidden）。
+   * 参数形状与取值一律交给服务层校验，门禁不重复实现第二套规则。
+   */
+
+  private async handleRoomGitConfig(session: WSSession, payload: Record<string, unknown>): Promise<RoomGateReply> {
+    const roomId = this.assertRoomId(payload.roomId)
+    this.requireSessionMember(roomId, session)
+    const status = await this.requireRoomWorkspace().configureRepo(
+      roomId,
+      session.deviceId,
+      // 没给 repo 时用空对象占位：服务层会把它判成 invalid-repo（remoteUrl is required），
+      // 与「显式传了非法值」走同一条错误路径，门禁不必再实现一套形状校验。
+      optionalRepoConfig(payload.repo) ?? ({} as RoomRepoConfigInput)
+    )
+    return { type: 'room-git-status', payload: status }
+  }
+
+  private async handleRoomGitClear(session: WSSession, payload: Record<string, unknown>): Promise<RoomGateReply> {
+    const roomId = this.assertRoomId(payload.roomId)
+    this.requireSessionMember(roomId, session)
+    const status = await this.requireRoomWorkspace().clearRepo(roomId, session.deviceId)
+    return { type: 'room-git-status', payload: status }
+  }
+
+  private handleRoomGitStatus(session: WSSession, payload: Record<string, unknown>): RoomGateReply {
+    const roomId = this.assertRoomId(payload.roomId)
+    this.requireSessionMember(roomId, session)
+    return { type: 'room-git-status', payload: this.requireRoomWorkspace().status(roomId, session.deviceId) }
+  }
+
+  private async handleWorkspaceBind(session: WSSession, payload: Record<string, unknown>): Promise<RoomGateReply> {
+    const roomId = this.assertRoomId(payload.roomId)
+    this.requireSessionMember(roomId, session)
+    // path 非字符串时交给服务层报 invalid-workspace（它有 typeof 兜底）。
+    const status = await this.requireRoomWorkspace().bindWorkspace(
+      roomId,
+      session.deviceId,
+      typeof payload.path === 'string' ? payload.path : ''
+    )
+    return { type: 'room-git-status', payload: status }
+  }
+
+  private async handleWorkspaceUnbind(session: WSSession, payload: Record<string, unknown>): Promise<RoomGateReply> {
+    const roomId = this.assertRoomId(payload.roomId)
+    this.requireSessionMember(roomId, session)
+    const status = await this.requireRoomWorkspace().unbindWorkspace(roomId, session.deviceId)
+    return { type: 'room-git-status', payload: status }
+  }
+
+  private async handleWorkspaceCandidates(session: WSSession, payload: Record<string, unknown>): Promise<RoomGateReply> {
+    const roomId = this.assertRoomId(payload.roomId)
+    this.requireSessionMember(roomId, session)
+    return { type: 'room-workspace-candidates', payload: { roomId, paths: await this.requireRoomWorkspace().candidates() } }
+  }
+
+  private async handleRoomGitSync(session: WSSession, payload: Record<string, unknown>): Promise<RoomGateReply> {
+    const roomId = this.assertRoomId(payload.roomId)
+    this.requireSessionMember(roomId, session)
+    // 手动同步：trigger 固定 'manual'（契约 §4.2 规则 4，手动 = 用户明确要求，仍要提交）。
+    const result = await this.requireRoomWorkspace().sync(roomId, session.deviceId, 'manual')
+    return { type: 'room-git-sync-result', payload: { roomId, result } }
   }
 
   // --- chat handlers ---
@@ -582,7 +769,12 @@ export function apply(ctx: Context, config: CrossTransferConfig): void {
   chat.initialize()
   gitSync.initialize()
   rooms.initialize(config.rooms)
-  const roomGateway = new RoomGateway(ctx, rooms, chat, wsServer)
+  // 房间 Git 工作区服务（契约 §4.6）：必须在 RoomGateway 之前构造好，
+  // 因为桥接发生在它的 subscribe() 里（构造函数内）。
+  // config.roomGit 可选：旧配置不带这一块时用服务层的默认值。
+  const roomWorkspace = new RoomWorkspaceService(ctx, rooms, gitSync)
+  roomWorkspace.initialize(config.roomGit ?? {})
+  const roomGateway = new RoomGateway(ctx, rooms, chat, wsServer, roomWorkspace)
   // 唯一的门禁安装点：装上之后房间语义消息才会被裁决，否则一律 fail-closed 拒绝。
   wsServer.setRoomGate(roomGateway)
 
@@ -698,6 +890,9 @@ export function apply(ctx: Context, config: CrossTransferConfig): void {
                 const { credential } = rooms.authenticateBearer(req.headers.authorization)
                 if (!credential) throw new RoomError('invalid-device', 'Device secret is required')
                 roomGateway.proveDevice(credential.deviceId)
+                // 建房前先做纯校验（契约 §4.5）：校验不过直接回错误，绝不能建出一个半配置的房间。
+                const repo = optionalRepoConfig(body?.repo)
+                if (repo) roomWorkspace.validateRepoConfig(repo)
                 const result = await rooms.createRoom({
                   roomId: typeof body?.roomId === 'string' ? body.roomId : undefined,
                   name: typeof body?.name === 'string' ? body.name : undefined,
@@ -708,6 +903,15 @@ export function apply(ctx: Context, config: CrossTransferConfig): void {
                   deviceName: credential.deviceName,
                   remoteAddress: req.socket.remoteAddress ?? undefined
                 })
+                // 与 WS room-create 一致（契约 §4.5）：建房成功后配置仓库并重新投影
+                // RoomInfo（否则应答里的 repoConfigured 仍是建房那一刻的 false）。
+                // 应答仍返回完整 RoomJoinResult，只有 room 换成最新投影。
+                if (repo) {
+                  const roomId = result.room.roomId
+                  await roomWorkspace.configureRepo(roomId, credential.deviceId, repo)
+                  sendJson(res, 200, { ...result, room: rooms.getRoomInfo(roomId, credential.deviceId) })
+                  return
+                }
                 sendJson(res, 200, result)
               } catch (error) {
                 respondRoomError(res, error)
@@ -854,6 +1058,91 @@ export function apply(ctx: Context, config: CrossTransferConfig): void {
               return
             }
 
+            // 房间 Git 工作区同步路由（契约 §4.4）：位置在房间路由段之后、404 之前。
+            // 方法不匹配统一 405，错误体一律走 respondRoomError。
+            const gitMatch = /^\/rooms\/([0-9]{4,12})\/(git|workspace|workspaces)$/.exec(route)
+            if (gitMatch) {
+              const [, roomId, sub] = gitMatch
+              if (sub === 'git' && req.method === 'GET') {
+                try {
+                  const ticket = requireRoomTicket(roomId, req)
+                  sendJson(res, 200, roomWorkspace.status(roomId, ticket.deviceId))
+                } catch (error) {
+                  respondRoomError(res, error)
+                }
+                return
+              }
+              if (sub === 'git' && req.method === 'PUT') {
+                try {
+                  const ticket = requireOwnerTicket(roomId, req)
+                  const body = await readJsonBody(req)
+                  sendJson(res, 200, await roomWorkspace.configureRepo(roomId, ticket.deviceId, body as RoomRepoConfigInput))
+                } catch (error) {
+                  respondRoomError(res, error)
+                }
+                return
+              }
+              if (sub === 'git' && req.method === 'DELETE') {
+                try {
+                  const ticket = requireOwnerTicket(roomId, req)
+                  sendJson(res, 200, await roomWorkspace.clearRepo(roomId, ticket.deviceId))
+                } catch (error) {
+                  respondRoomError(res, error)
+                }
+                return
+              }
+              if (sub === 'workspace' && req.method === 'PUT') {
+                try {
+                  const ticket = requireRoomTicket(roomId, req)
+                  const body = await readJsonBody(req)
+                  if (typeof body?.path !== 'string' || body.path.length === 0) {
+                    throw new RoomError('invalid-workspace', 'path is required')
+                  }
+                  sendJson(res, 200, await roomWorkspace.bindWorkspace(roomId, ticket.deviceId, body.path))
+                } catch (error) {
+                  respondRoomError(res, error)
+                }
+                return
+              }
+              if (sub === 'workspace' && req.method === 'DELETE') {
+                try {
+                  const ticket = requireRoomTicket(roomId, req)
+                  sendJson(res, 200, await roomWorkspace.unbindWorkspace(roomId, ticket.deviceId))
+                } catch (error) {
+                  respondRoomError(res, error)
+                }
+                return
+              }
+              if (sub === 'workspaces' && req.method === 'GET') {
+                try {
+                  const ticket = requireRoomTicket(roomId, req)
+                  sendJson(res, 200, { roomId, paths: await roomWorkspace.candidates() })
+                } catch (error) {
+                  respondRoomError(res, error)
+                }
+                return
+              }
+              sendJson(res, 405, METHOD_NOT_ALLOWED)
+              return
+            }
+
+            const gitSyncMatch = /^\/rooms\/([0-9]{4,12})\/git\/sync$/.exec(route)
+            if (gitSyncMatch) {
+              const [, roomId] = gitSyncMatch
+              if (req.method !== 'POST') {
+                sendJson(res, 405, METHOD_NOT_ALLOWED)
+                return
+              }
+              try {
+                const ticket = requireRoomTicket(roomId, req)
+                // 手动同步：trigger 固定 'manual'（契约 §4.2 规则 4）。
+                sendJson(res, 200, { roomId, result: await roomWorkspace.sync(roomId, ticket.deviceId, 'manual') })
+              } catch (error) {
+                respondRoomError(res, error)
+              }
+              return
+            }
+
             if (route === '/files/initiate' && req.method === 'POST') {
               const body = await readJsonBody(req)
               sendJson(res, 200, await fileTransfer.initiateTransfer(body))
@@ -902,6 +1191,11 @@ export function apply(ctx: Context, config: CrossTransferConfig): void {
     'cross-transfer: rest routes'
   )
 
+  // 宿主钩子（契约 §4.6）：AI 回合结束 → 房间绑定工作区提交+推送。
+  // 宿主没有 workspaceChanges 服务时 attachHost 只记一条 info 并返回空退订函数，
+  // 插件其余功能照常可用（契约 §4.2 attachHost）。
+  const detachHost = roomWorkspace.attachHost()
+
   // One effect owns the whole teardown: services stop when the fiber unloads.
   ctx.effect(() => () => {
     // 先摘门禁再拆服务：拆机过程中不再有房间帧落到已经关掉的服务上。
@@ -912,6 +1206,9 @@ export function apply(ctx: Context, config: CrossTransferConfig): void {
     chat.shutdown()
     gitSync.shutdown()
     rooms.shutdown()
+    // 契约 §4.6：先退订宿主钩子再关服务——顺序反了会在关闭瞬间又触发一次同步。
+    detachHost()
+    roomWorkspace.shutdown()
   }, 'cross-transfer: service teardown')
 
   ctx.logger.info(`[cross-transfer] mounted at ${path} (rooms enabled)`)

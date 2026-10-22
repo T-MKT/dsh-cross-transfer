@@ -1711,6 +1711,7 @@ describe('不变量', () => {
       'name',
       'ownerDeviceId',
       'ownerOnline',
+      'repoConfigured',
       'roomId',
     ])
   })

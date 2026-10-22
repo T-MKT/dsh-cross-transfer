@@ -88,6 +88,73 @@ export interface SyncResult {
 }
 
 /**
+ * 房间仓库凭据（§3）。浏览器端只负责把用户填的令牌带过去，服务端保证不落盘；
+ * 与 src/room-workspace.ts 的同名形状保持一致。
+ */
+export interface RoomRepoAuthInput {
+  /** 仅支持 token 形式（HTTPS Basic）。 */
+  type: 'token'
+  token: string
+  /** 默认 'oauth2'（GitHub）或 'git'。 */
+  username?: string
+}
+
+/** 房主建房/改配时提交的仓库配置（§3）。 */
+export interface RoomRepoConfigInput {
+  /** 必须是 http:// 或 https://；允许内嵌 userinfo，会被抽取成 auth 并从存储值里剥离。 */
+  remoteUrl: string
+  /** 默认 'main'。 */
+  branch?: string
+  auth?: RoomRepoAuthInput
+  /** 默认 true。 */
+  autoCommit?: boolean
+  /** 默认 true。 */
+  autoPush?: boolean
+  commitAuthorName?: string   // 默认 'dsh-cross-transfer'
+  commitAuthorEmail?: string  // 默认 'cross-transfer@dsh.local'
+}
+
+/** 对外投影：绝不包含 token、绝不包含未剥离 userinfo 的 URL（§3）。 */
+export interface RoomRepoStatus {
+  roomId: string
+  configured: boolean
+  /** 已剥离 userinfo；未配置时省略。 */
+  remoteUrl?: string
+  branch?: string
+  authConfigured: boolean
+  autoCommit: boolean
+  autoPush: boolean
+  updatedAt?: number
+  /** 脱敏。 */
+  updatedByDeviceId?: string
+  bindings: WorkspaceBindingStatus[]
+}
+
+/** 单个成员的工作区绑定状态（§3）。 */
+export interface WorkspaceBindingStatus {
+  /** 脱敏 deviceId。 */
+  deviceId: string
+  deviceName: string
+  bound: boolean
+  /** 只对绑定者本人与房主返回真实路径；其他成员看到 undefined。 */
+  workspacePath?: string
+  repoReady?: boolean
+  lastSync?: SyncSummary
+}
+
+/** 一次同步（自动或手动）的结果（§3）。失败也必须可见，error 非空。 */
+export interface SyncSummary {
+  at: number
+  ok: boolean
+  trigger: 'auto' | 'manual'
+  /** 本次提交的文件数（含删除）。 */
+  committed: number
+  commitOid?: string
+  pushed: boolean
+  error?: string
+}
+
+/**
  * A failure the server described with a machine-readable code. The browser half
  * cannot reuse the host's RoomError (importing the class would pull node:crypto
  * into the bundle), so this mirrors it.
@@ -125,6 +192,8 @@ export interface CreateRoomOptions {
   password: string
   maxMembers?: number
   discoverable?: boolean
+  /** 建房时一并设置仓库（§5.1）；不传即「房主稍后配置」。 */
+  repo?: RoomRepoConfigInput
 }
 
 export interface CrossTransferEvents {
@@ -158,6 +227,9 @@ export interface CrossTransferEvents {
   roomLocked: [roomId: string, locked: boolean]
   roomPasswordChanged: [roomId: string]
   activeRoomChanged: [room: ActiveRoom | null]
+  // Room Git workspace (§5.1)：都是服务端按接收者逐个投影后的推送，客户端只按 roomId 存本地视图。
+  roomGitStatus: [status: RoomRepoStatus]
+  roomGitSync: [roomId: string, deviceId: string, result: SyncSummary]
   // Git sync
   syncProgress: [repoId: string, progress: { phase: string; loaded: number; total: number }]
   syncComplete: [result: SyncResult]
@@ -181,7 +253,12 @@ const ROOM_REPLY_TYPES = new Set([
   'room-left',
   'room-locked',
   'room-password-changed',
-  'room-member-kicked'
+  'room-member-kicked',
+  // 房间 Git 工作区（§5.1）：请求/应答同名（除 sync），应答帧只用于兑现请求，
+  // 事件由无 messageId 的推送形态触发。
+  'room-git-status',
+  'room-workspace-candidates',
+  'room-git-sync-result'
 ])
 
 export class CrossTransferClient extends Service {
@@ -563,6 +640,16 @@ export class CrossTransferClient extends Service {
       case 'room-password-changed':
         this.emit('roomPasswordChanged', (message.payload as { roomId: string }).roomId)
         break
+      case 'room-git-status':
+        // 只有推送形态（无 messageId）会走到这里：带 messageId 的应答已在上面兑现请求并 return。
+        this.emit('roomGitStatus', message.payload as RoomRepoStatus)
+        break
+      case 'room-git-sync-result':
+        {
+          const payload = message.payload as { roomId: string; deviceId: string; result: SyncSummary }
+          this.emit('roomGitSync', payload.roomId, payload.deviceId, payload.result)
+        }
+        break
       case 'sync-progress':
         {
           const payload = message.payload as { repoId: string; progress: { phase: string; loaded: number; total: number } }
@@ -693,6 +780,15 @@ export class CrossTransferClient extends Service {
       case 'room-lock': return 'room-locked'
       case 'room-list': return 'room-list'
       case 'room-members': return 'room-members'
+      // 契约 §4.5：这五个请求的应答统一是 room-git-status（只有 candidates/sync 例外）。
+      // 少了这五条，测试里的 mock 服务端会回成与请求同名的帧，与真实服务端不一致。
+      case 'room-git-config':
+      case 'room-git-clear':
+      case 'room-git-status':
+      case 'room-workspace-bind':
+      case 'room-workspace-unbind':
+        return 'room-git-status'
+      case 'room-git-sync': return 'room-git-sync-result'
       case 'chat-message': return 'chat-message-ack'
       case 'chat-history-request': return 'chat-history'
       default: return type
@@ -722,7 +818,8 @@ export class CrossTransferClient extends Service {
             memberCount: 1,
             maxMembers: typeof payload.maxMembers === 'number' ? payload.maxMembers : 16,
             locked: false,
-            discoverable: payload.discoverable !== false
+            discoverable: payload.discoverable !== false,
+            repoConfigured: false
           },
           member: { deviceId: this.deviceId, deviceName: this.deviceName, role, joinedAt: 1699999999000, sessionCount: 1, online: true },
           ticket: { ticket: `ticket-${roomId}`, roomId, deviceId: this.deviceId, role, issuedAt: 1699999999000, expiresAt: 1700000000000 }
@@ -742,6 +839,31 @@ export class CrossTransferClient extends Service {
         return { rooms: [] }
       case 'room-members':
         return { roomId, members: [] }
+      case 'room-git-config':
+      case 'room-git-clear':
+      case 'room-git-status':
+      case 'room-workspace-bind':
+      case 'room-workspace-unbind': {
+        // 最小可用的 RoomRepoStatus：字段取自请求（配置请求带 repo），
+        // 没给就退到服务端默认值，保证 mock 与真实投影一样「无 token、无 userinfo」。
+        const repo = payload.repo as RoomRepoConfigInput | undefined
+        const configured = message.type !== 'room-git-clear'
+        return {
+          roomId,
+          configured,
+          ...(configured && repo?.remoteUrl ? { remoteUrl: repo.remoteUrl } : {}),
+          // 未配置时按 §3 的投影习惯省略 branch，不要留一个 'main' 的假值。
+          ...(configured ? { branch: repo?.branch ?? 'main' } : {}),
+          authConfigured: configured && repo?.auth !== undefined,
+          autoCommit: repo?.autoCommit !== false,
+          autoPush: repo?.autoPush !== false,
+          bindings: []
+        }
+      }
+      case 'room-workspace-candidates':
+        return { roomId, paths: [] }
+      case 'room-git-sync':
+        return { roomId, result: { at: 1699999999000, ok: true, trigger: 'manual', committed: 0, pushed: true } }
       case 'chat-message':
         return { ...payload, messageId: 'mock-ack', senderDeviceId: this.deviceId, senderDeviceName: this.deviceName, senderSessionId: '', timestamp: 1699999999000 }
       case 'chat-history-request':
@@ -1061,6 +1183,9 @@ export class CrossTransferClient extends Service {
 
   // Rooms
   async createRoom(options: CreateRoomOptions): Promise<ActiveRoom> {
+    // repo 为 undefined 时不放这个键：服务端用「键是否存在」区分「不配置」与「清空」，
+    // 而 JSON.stringify 也会丢掉 undefined，这里显式展开让两种路径行为一致。
+    const repo = options.repo
     const payload = await this.request({
       type: 'room-create',
       payload: {
@@ -1068,7 +1193,8 @@ export class CrossTransferClient extends Service {
         name: options.name,
         password: options.password,
         maxMembers: options.maxMembers,
-        discoverable: options.discoverable
+        discoverable: options.discoverable,
+        ...(repo === undefined ? {} : { repo })
       }
     }) as RoomJoinResultPayload
     // 房号可能由服务端生成，一切以应答为准；密码只进内存，供断线重进使用。
@@ -1200,6 +1326,45 @@ export class CrossTransferClient extends Service {
     if (!room) return
     this.activeRoomId = roomId
     this.emit('activeRoomChanged', room)
+  }
+
+  // -------------------------------------------------------------------------
+  // 房间 Git 工作区（§5.1）
+  // -------------------------------------------------------------------------
+  // 全部走 roomRequest：票据失效时用内存里的密码自动重进一次再重试，
+  // 与其它房间操作共用同一套恢复语义（权限判定在服务端，客户端只透传）。
+
+  async setRoomGit(roomId: string, repo: RoomRepoConfigInput): Promise<RoomRepoStatus> {
+    return await this.roomRequest<RoomRepoStatus>({ type: 'room-git-config', payload: { roomId, repo } }, roomId)
+  }
+
+  async clearRoomGit(roomId: string): Promise<RoomRepoStatus> {
+    return await this.roomRequest<RoomRepoStatus>({ type: 'room-git-clear', payload: { roomId } }, roomId)
+  }
+
+  async getRoomGitStatus(roomId: string): Promise<RoomRepoStatus> {
+    return await this.roomRequest<RoomRepoStatus>({ type: 'room-git-status', payload: { roomId } }, roomId)
+  }
+
+  async bindRoomWorkspace(roomId: string, path: string): Promise<RoomRepoStatus> {
+    return await this.roomRequest<RoomRepoStatus>({ type: 'room-workspace-bind', payload: { roomId, path } }, roomId)
+  }
+
+  async unbindRoomWorkspace(roomId: string): Promise<RoomRepoStatus> {
+    return await this.roomRequest<RoomRepoStatus>({ type: 'room-workspace-unbind', payload: { roomId } }, roomId)
+  }
+
+  async listWorkspaceCandidates(roomId: string): Promise<string[]> {
+    const payload = await this.roomRequest<{ roomId: string; paths: string[] }>(
+      { type: 'room-workspace-candidates', payload: { roomId } }, roomId)
+    return payload.paths ?? []
+  }
+
+  async syncRoomGit(roomId: string): Promise<SyncSummary> {
+    const payload = await this.roomRequest<{ roomId: string; result: SyncSummary }>(
+      // push 的最长等待是服务端的 pushTimeoutMs（默认 60s），用默认 10s 会把还在推送的请求判死。
+      { type: 'room-git-sync', payload: { roomId } }, roomId, 65000)
+    return payload.result
   }
 
   // Git Sync
