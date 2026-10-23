@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CrossTransferClient } from './CrossTransferClient.js'
 import { CrossTransferUI } from './CrossTransferUI.js'
+import { registerPanelCloser, registerTransferOpener, closeOtherPanels } from './panelBridge.js'
 
 /**
  * Props delivered by the `sidebar.footer.action` slot: the sidebar's column
@@ -15,6 +16,11 @@ interface CrossTransferLauncherProps {
 const PANEL_WIDTH = 720
 /** Preferred floating-panel height share of the viewport. */
 const PANEL_HEIGHT_RATIO = 0.6
+/**
+ * 面板在 panelBridge 里的标识，与 `src/client/index.tsx` 注册 slot 条目用的 id 一致。
+ * 两个面板各占一个键，互斥判定靠它区分「自己」与「对方」。
+ */
+const PANEL_OWNER_ID = 'cross-transfer-panel'
 
 interface PanelAnchor {
   left: number
@@ -51,6 +57,20 @@ export const CrossTransferLauncher: React.FC<CrossTransferLauncherProps> = ({ wi
       offDisconnected()
     }
   }, [client])
+
+  // 把「打开我」注册给聊天面板：聊天窗空状态需要一个跳到房间面板的入口，
+  // 而两个 launcher 的 React 树彼此独立，只能走模块级桥。卸载时自动注销。
+  useEffect(() => {
+    const opener = (): void => setOpen(true)
+    return registerTransferOpener(opener)
+  }, [])
+
+  // 注册「关掉我」，并在自己打开时请对方让位：两个面板都锚在侧边栏脚部
+  // （同一个 position: fixed 位置），同时开会整块互相盖住，所以互斥。
+  useEffect(() => registerPanelCloser(PANEL_OWNER_ID, () => setOpen(false)), [])
+  useEffect(() => {
+    if (open) closeOtherPanels(PANEL_OWNER_ID)
+  }, [open])
 
   // Anchor the panel to the trigger; re-place it when the viewport changes.
   useLayoutEffect(() => {

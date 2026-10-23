@@ -1,7 +1,6 @@
 import React, { useState } from 'react'
 import { CrossTransferClient, PeerDevice } from './CrossTransferClient.js'
 import { FileTransferPanel } from './FileTransferPanel.js'
-import { ChatPanel } from './ChatPanel.js'
 import { RoomPanel } from './RoomPanel.js'
 import { GitSyncPanel } from './GitSyncPanel.js'
 import { DeviceList } from './DeviceList.js'
@@ -11,14 +10,15 @@ interface CrossTransferUIProps {
 }
 
 export const CrossTransferUI: React.FC<CrossTransferUIProps> = ({ client }) => {
-  const [activeTab, setActiveTab] = useState<'files' | 'rooms' | 'chat' | 'git'>('files')
+  const [activeTab, setActiveTab] = useState<'files' | 'rooms' | 'git'>('files')
   const [selectedDevice, setSelectedDevice] = useState<PeerDevice | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
+  // 聊天已经搬出这个面板，由侧边栏的 💬 入口单独打开（ChatLauncher）。
+  // 这里只留文件 / 房间 / Git 三页，页签数量少了，头部也更安静。
   const tabs = [
     { id: 'files', label: 'Files', icon: '📁' },
     { id: 'rooms', label: 'Rooms', icon: '🚪' },
-    { id: 'chat', label: 'Chat', icon: '💬' },
     { id: 'git', label: 'Git Sync', icon: '🔄' }
   ] as const
 
@@ -150,9 +150,6 @@ export const CrossTransferUI: React.FC<CrossTransferUIProps> = ({ client }) => {
             )}
             {activeTab === 'rooms' && (
               <RoomPanel client={client} />
-            )}
-            {activeTab === 'chat' && (
-              <ChatPanel client={client} onRequireRooms={() => setActiveTab('rooms')} />
             )}
             {activeTab === 'git' && (
               <GitSyncPanel client={client} />

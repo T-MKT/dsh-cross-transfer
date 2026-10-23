@@ -10,6 +10,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { z } from 'zod'
 import { CrossTransferClient } from './CrossTransferClient.js'
 import { CrossTransferLauncher } from './CrossTransferLauncher.js'
+import { ChatLauncher } from './ChatLauncher.js'
 
 /** Cordis plugin name. */
 export const name = 'cross-transfer-client'
@@ -64,6 +65,10 @@ export function apply(ctx: Context, config: CrossTransferClientConfig): void {
   // The sidebar foot is the visible entry point: a compact trigger that opens
   // the transfer UI in a floating panel. Registering before the auto-connect
   // early return keeps the entry present when auto-connect is off.
+  //
+  // 同一个列表插槽上注册两条：⇄ Cross Transfer 与 💬 聊天。它们是彼此独立的悬浮窗，
+  // 各自开合、互不顶掉对方的状态；只是不会同时出现在屏幕上（都锚在侧边栏脚部，
+  // 同时开会互相盖住），互斥由 panelBridge 协调。order 决定左右次序。
   ctx.slots.inject('sidebar.footer.action', () =>
     ctx.slots.register(
       {
@@ -73,6 +78,18 @@ export function apply(ctx: Context, config: CrossTransferClientConfig): void {
         inject: () => ({ client })
       },
       CrossTransferLauncher
+    )
+  )
+
+  ctx.slots.inject('sidebar.footer.action', () =>
+    ctx.slots.register(
+      {
+        name: 'sidebar.footer.action',
+        id: 'cross-transfer-chat-panel',
+        order: 110,
+        inject: () => ({ client })
+      },
+      ChatLauncher
     )
   )
 
@@ -123,6 +140,7 @@ export function apply(ctx: Context, config: CrossTransferClientConfig): void {
 export { CrossTransferClient } from './CrossTransferClient.js'
 export { FileTransferPanel } from './FileTransferPanel.js'
 export { ChatPanel } from './ChatPanel.js'
+export { ChatLauncher } from './ChatLauncher.js'
 export { RoomPanel } from './RoomPanel.js'
 export { GitSyncPanel } from './GitSyncPanel.js'
 export { DeviceList } from './DeviceList.js'

@@ -640,8 +640,12 @@ await client.ensureDeviceRegistered()
 ### UI 组件
 
 - `RoomPanel`：建房/进房表单、已加入房间列表、成员列表（在线位 + 房主标记 + 踢人）、房主操作（改密/锁房/关房）、可发现房间列表、错误提示（含 `retryAfterMs` 倒数）；建房表单含折叠区「Git 仓库（可选）」，房内另有「仓库与工作区」区块（房主配仓库、成员绑定本机工作区 + 候选目录 `datalist` + 绑定/解绑/立即同步、成员同步状态列表）
-- `CrossTransferUI`：内置 `Rooms` 标签页
-- 其余面板：`FileTransferPanel`、`ChatPanel`、`GitSyncPanel`、`DeviceList`
+- `ChatPanel`：**独立聊天窗**，左右两栏——左栏已加入的房间列表（点击即切换当前房间），右栏会话。消息按 `text` / `code` / `file` / `system` 四种类型分别渲染（代码块等宽字体、文件带 📎 与可读元信息、系统消息居中），跨天插入日期分隔线，显示 typing 与「正在输入…」，Enter 发送 / Shift+Enter 换行；未连接时输入框禁用。未进房时只给引导，不订阅、不请求历史
+- `ChatLauncher`：侧边栏底部的 💬 入口，点击打开上述聊天窗。与 ⇄ Cross Transfer 是**同一个 `sidebar.footer.action` 列表插槽上的两条独立条目**（`id` 分别为 `cross-transfer-chat-panel` / `cross-transfer-panel`），各自开合，且**互斥**——两个面板都锚在侧边栏脚部（同一个 `position: fixed` 位置），同时开会整块互相盖住，所以开一个就请另一个关掉
+- `CrossTransferUI`：Cross Transfer 悬浮窗本体，含 `Files` / `Rooms` / `Git Sync` 三个页签（聊天已独立出去）
+- 其余面板：`FileTransferPanel`、`GitSyncPanel`、`DeviceList`
+
+两个悬浮窗之间唯一的耦合是 `panelBridge`：聊天窗空状态的「打开 Cross Transfer 面板」按钮需要一个跳到房间面板的入口，互斥也需要跨面板通信，而两个 launcher 的 React 树彼此独立，只能走这条模块级注册表（`registerTransferOpener` / `openTransferPanel` / `registerPanelCloser` / `closeOtherPanels`）。它不持有任何聊天或房间状态，卸载时按引用自动注销。
 
 ## 配置参考
 
